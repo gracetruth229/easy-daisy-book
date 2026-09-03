@@ -8,3 +8,4 @@ backup*.json
 data-private/
 .DS_Store
 Thumbs.db
+내장부.html
