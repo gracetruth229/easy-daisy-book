@@ -764,6 +764,8 @@ function saveDraft(){
       if(prev.reverses) doc.reverses=prev.reverses;
       doc.editCount=(prev.editCount||0)+1;
       doc.lastEditedAt=new Date().toISOString();
+      var why=prompt("무엇을 왜 고치셨나요? (전표에 남습니다)", prev.editNote||"");
+      doc.editNote=(why===null?"":String(why).trim());
     }
   }
   persistVoucher(id, doc);
@@ -812,7 +814,8 @@ function viewLedger(){
     if(v.reverses) box.appendChild(el("span",{class:"tag c", text:"역분개"}));
     if(rev[v.id]) box.appendChild(el("span",{class:"tag w", text:"취소됨"}));
     if(v.editCount) box.appendChild(el("span",{class:"tag w",
-      text:v.editCount+"회 수정 · "+String(v.lastEditedAt||"").slice(0,10)}));
+      text:v.editCount+"회 수정 · "+String(v.lastEditedAt||"").slice(0,10)
+           +(v.editNote?" · "+v.editNote:"")}));
     if(v.unlocked) box.appendChild(el("span",{class:"tag c", text:"잠금 풀림"}));
 
     var sp=el("span",{style:"margin-left:auto;display:flex;gap:6px;"});
@@ -1051,7 +1054,7 @@ function viewFS(){
 }
 
 /* ---------- 거래처 ---------- */
-var PKINDS = ["매입처","매출처","은행","임직원","기타"];
+var PKINDS = ["매입처","매출처","계좌","은행","임직원","기타"];
 function partnerForm(p, onSave){
   var name = prompt("거래처 이름", p ? p.name : "");
   if(name===null) return;
@@ -1147,7 +1150,7 @@ function viewPartners(){
     tb.appendChild(tr);
   });
   tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
-  card.appendChild(el("div",{class:"note", text:"전표에서 거래처 칸에 이름을 넣기 시작하면 여기 목록이 뜹니다. 고르면 사업자번호가 자동으로 채워집니다. 전표에 쓰인 거래처는 지울 수 없습니다."}));
+  card.appendChild(el("div",{class:"note", text:"전표에서 거래처 칸에 이름을 넣기 시작하면 여기 목록이 뜹니다. 고르면 사업자번호가 자동으로 채워집니다. 전표에 쓰인 거래처는 지울 수 없습니다. 「계좌」는 우리 통장을 가리키는 이름이라 세금계산서 합계표에는 들어가지 않습니다 — 거래 상대처는 「매입처」나 「매출처」로 두세요."}));
   wrap.appendChild(card);
   return wrap;
 }
