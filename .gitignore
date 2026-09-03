@@ -1,0 +1,10 @@
+# 회계 자료는 저장소에 올리지 않습니다 (거래처·사업자번호·금액 포함)
+*장부데이터*.json
+장부백업*.json
+backup*.json
+*.xlsx
+*.xls
+*.csv
+data-private/
+.DS_Store
+Thumbs.db
