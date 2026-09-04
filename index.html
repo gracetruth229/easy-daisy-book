@@ -164,6 +164,18 @@ table.fs tr.grp td{background:var(--surface-3);font-weight:600;color:var(--ink-2
 table.fs tr.hd td{font-weight:600;}
 table.fs tr.sub td:first-child{padding-left:30px;color:var(--ink-2);}
 table.fs tr.tot td{border-top:1px solid var(--rule);border-bottom:2px solid var(--rule);background:var(--surface-3);font-weight:600;padding-top:8px;padding-bottom:8px;}
+table.fs.multi{min-width:100%;}
+table.fs.multi th{font-size:10.5px;font-family:var(--f-m);letter-spacing:.06em;
+  color:var(--accent-deep);font-weight:600;padding:8px 14px;border-bottom:1px solid var(--rule);
+  background:var(--surface-2);text-align:left;white-space:nowrap;}
+table.fs.multi th.n{text-align:right;}
+table.fs.multi th.sum,table.fs.multi td.sum{border-left:1px solid var(--rule);}
+table.fs.multi td.n{width:112px;min-width:96px;}
+table.fs.multi td.sum{font-weight:600;color:var(--accent-deep);background:var(--surface-3);}
+table.fs.multi tr.zero td.sum{color:var(--ink-4);font-weight:400;}
+table.fs.multi tr.tot td.sum{background:var(--accent-soft);}
+table.fs.multi td:first-child{white-space:nowrap;}
+.plw{overflow-x:auto;border:0;border-radius:0;background:transparent;}
 table.fs.two th{font-size:10px;font-family:var(--f-m);letter-spacing:.1em;text-transform:uppercase;
   color:var(--ink-3);font-weight:500;padding:7px 14px;border-bottom:1px solid var(--rule);
   background:var(--surface-3);text-align:left;}
@@ -484,6 +496,17 @@ function periodVouchers(){ return S.vouchers.filter(inPeriod); }
 function months(){
   var set={}; S.vouchers.forEach(function(v){ if(v.date) set[ym(v.date)]=1; });
   return Object.keys(set).sort();
+}
+/* 손익계산서에 세울 월 목록 — 전표가 있는 달만, 선택한 기간까지 */
+function plMonths(){
+  return months().filter(function(m){ return S.period==="all" || m<=S.period; });
+}
+function monthLabel(m){
+  var mm=parseInt(String(m).slice(5,7),10);
+  return mm+"월";
+}
+function inMonth(m){
+  return function(v){ return ym(v.date)===m; };
 }
 
 /* 계정별 집계 */
@@ -1022,6 +1045,43 @@ function buildPL(filter){
     iSales:items(4000000,4499999), iCogs:items(4500000,4999999), iSga:items(8000000,8999999),
     iNi:items(9000000,9309999), iNe:items(9310000,9999999)};
 }
+function fsTableN(sections, totalLabel, totals, heads){
+  var n=heads.length;
+  var tab=el("table",{class:"fs multi"}), th=el("thead"), tb=el("tbody");
+  var hr=el("tr");
+  hr.appendChild(el("th",{text:"계정과목"}));
+  heads.forEach(function(h,i){
+    hr.appendChild(el("th",{class:"n"+(i===n-1?" sum":""), text:h}));
+  });
+  th.appendChild(hr); tab.appendChild(th);
+  function cells(tr, vals, extra){
+    vals.forEach(function(v,i){
+      tr.appendChild(el("td",{class:"n"+(v<0?" neg":"")+(i===n-1?" sum":"")+(extra||""),
+                              text:fmt0(v)}));
+    });
+  }
+  sections.forEach(function(sec){
+    if(sec.head){
+      tb.appendChild(el("tr",{class:"grp"},[el("td",{colspan:String(n+1), text:sec.head})]));
+      return;
+    }
+    var tr=el("tr",{class:"hd"});
+    tr.appendChild(el("td",{text:sec.title}));
+    cells(tr, sec.vals); tb.appendChild(tr);
+    (sec.items||[]).forEach(function(it){
+      var z=it.vals.every(function(v){ return Math.abs(v)<0.5; });
+      var r=el("tr",{class:"sub"+(z?" zero":"")});
+      r.appendChild(el("td",{text:it.name}));
+      cells(r, it.vals); tb.appendChild(r);
+    });
+  });
+  if(totalLabel){
+    var t=el("tr",{class:"tot"});
+    t.appendChild(el("td",{text:totalLabel}));
+    cells(t, totals); tb.appendChild(t);
+  }
+  tab.appendChild(tb); return tab;
+}
 function fsTable2(sections, totalLabel, totA, totB, headA, headB){
   var tab=el("table",{class:"fs two"}), th=el("thead"), tb=el("tbody");
   var hr=el("tr");
@@ -1129,41 +1189,49 @@ function viewFS(){
     +'<span class="sp"></span><span class="m" style="font-weight:500;color:var(--ink-3)">차이 '+fmt0(bs.diff)+"</span>"}));
   grid.appendChild(cB);
 
-  /* PL — 당월 + 누계 2단 */
-  var plM = buildPL(inPeriod), plC = buildPL(upToPeriod);
-  var whole = (S.period==="all");
+  /* PL — 월별 + 누계 */
+  var mons = plMonths();
+  var plByMon = mons.map(function(m){ return buildPL(inMonth(m)); });
+  var plCum  = buildPL(upToPeriod);
+  var cols   = plByMon.concat([plCum]);
+  var heads  = mons.map(monthLabel).concat(["누계"]);
+
   var cP=el("div",{class:"card"});
   cP.appendChild(el("div",{class:"ch"},[
-    el("span",{text:"손익계산서"}),
-    el("span",{class:"tag b", text: whole ? "전체 기간"
-      : (S.period+" 당월 · "+String(S.co.fyStart||"").slice(0,7)+" 부터 누계")})
+    el("span",{text:"월별 손익계산서"}),
+    el("span",{class:"tag b", text: mons.length
+      ? (monthLabel(mons[0])+" ~ "+monthLabel(mons[mons.length-1])+" · "+mons.length+"개월")
+      : "전표 없음"})
   ]));
-  function pair(key, ik){
-    return {a:plM[key], b:plC[key], items:(ik? plM[ik].map(function(it,i){
-      return {code:it.code, name:it.name, a:it.bal, b:plC[ik][i]?plC[ik][i].bal:0};
-    }) : null)};
+
+  function secN(title, key, ik){
+    var o={title:title, vals:cols.map(function(p){ return p[key]; })};
+    if(ik){
+      o.items = plCum[ik].map(function(it, idx){
+        return {name:it.name, vals:cols.map(function(p){ return p[ik][idx] ? p[ik][idx].bal : 0; })};
+      });
+    }
+    return o;
   }
-  function sec(title, key, ik){
-    var p=pair(key, ik);
-    return {title:title, a:p.a, b:p.b, items:p.items};
-  }
-  var pTab=fsTable2([
-    sec("Ⅰ. 매출액", "sales", "iSales"),
-    sec("Ⅱ. 매출원가", "cogs", "iCogs"),
-    sec("Ⅲ. 매출총이익", "gross"),
+  var pTab=fsTableN([
+    secN("Ⅰ. 매출액", "sales", "iSales"),
+    secN("Ⅱ. 매출원가", "cogs", "iCogs"),
+    secN("Ⅲ. 매출총이익", "gross"),
     {head:"판매비와 관리비"},
-    sec("Ⅳ. 판매관리비", "sga", "iSga"),
-    sec("Ⅴ. 영업이익", "op"),
+    secN("Ⅳ. 판매관리비", "sga", "iSga"),
+    secN("Ⅴ. 영업이익", "op"),
     {head:"영업외"},
-    sec("Ⅵ. 영업외수익", "ni", "iNi"),
-    sec("Ⅶ. 영업외비용", "ne", "iNe"),
-    sec("Ⅷ. 법인세비용차감전순손익", "pre")
-  ], "Ⅸ. 당기순손익", plM.net, plC.net,
-     whole ? "금액" : "당월", whole ? "동일" : "누계");
-  cP.appendChild(pTab);
-  cP.appendChild(el("div",{class:"note", text: whole
-    ? "기간을 「전체」로 두셔서 당월과 누계가 같습니다. 왼쪽 위에서 달을 고르시면 그 달과 누계가 나뉘어 보입니다."
-    : "「당월」은 "+S.period+"에 작성한 전표만, 「누계」는 사업연도 시작부터 "+S.period+"까지 전부입니다. 누계 당기순손익이 재무상태표의 이익잉여금과 같습니다."}));
+    secN("Ⅵ. 영업외수익", "ni", "iNi"),
+    secN("Ⅶ. 영업외비용", "ne", "iNe"),
+    secN("Ⅷ. 법인세비용차감전순손익", "pre")
+  ], "Ⅸ. 당기순손익", cols.map(function(p){ return p.net; }), heads);
+
+  var pw=el("div",{class:"tw plw"});
+  pw.appendChild(pTab);
+  cP.appendChild(pw);
+  cP.appendChild(el("div",{class:"note", text:
+    "전표가 있는 달마다 칸이 하나씩 생깁니다. 8월 전표를 넣으시면 8월 칸이 자동으로 붙습니다. "
+    + "맨 오른쪽 「누계」는 사업연도 시작부터 더한 값이고, 그 아래 당기순손익이 재무상태표의 이익잉여금과 같습니다."}));
   grid.appendChild(cP);
   wrap.appendChild(grid);
   return wrap;
@@ -1384,20 +1452,25 @@ function rowsBS(){
   return out;
 }
 function rowsPL(){
-  var p=buildPL(), out=[["과목","금액"]];
-  function push(t,v,items){
-    out.push([t,v]);
-    (items||[]).forEach(function(i){ out.push(["  "+i.name, i.bal]); });
+  var mons=plMonths();
+  var cols=mons.map(function(m){ return buildPL(inMonth(m)); }).concat([buildPL(upToPeriod)]);
+  var out=[["과목"].concat(mons.map(monthLabel)).concat(["누계"])];
+  function push(t,key,ik){
+    out.push([t].concat(cols.map(function(p){ return p[key]; })));
+    if(!ik) return;
+    cols[cols.length-1][ik].forEach(function(it, idx){
+      out.push(["  "+it.name].concat(cols.map(function(p){ return p[ik][idx]?p[ik][idx].bal:0; })));
+    });
   }
-  push("Ⅰ. 매출액", p.sales, p.iSales);
-  push("Ⅱ. 매출원가", p.cogs, p.iCogs);
-  out.push(["Ⅲ. 매출총이익", p.gross]);
-  push("Ⅳ. 판매관리비", p.sga, p.iSga);
-  out.push(["Ⅴ. 영업이익", p.op]);
-  push("Ⅵ. 영업외수익", p.ni, p.iNi);
-  push("Ⅶ. 영업외비용", p.ne, p.iNe);
-  out.push(["Ⅷ. 법인세비용차감전순손익", p.pre]);
-  out.push(["Ⅸ. 당기순손익", p.net]);
+  push("Ⅰ. 매출액","sales","iSales");
+  push("Ⅱ. 매출원가","cogs","iCogs");
+  push("Ⅲ. 매출총이익","gross");
+  push("Ⅳ. 판매관리비","sga","iSga");
+  push("Ⅴ. 영업이익","op");
+  push("Ⅵ. 영업외수익","ni","iNi");
+  push("Ⅶ. 영업외비용","ne","iNe");
+  push("Ⅷ. 법인세비용차감전순손익","pre");
+  push("Ⅸ. 당기순손익","net");
   return out;
 }
 function rowsPartners(){
