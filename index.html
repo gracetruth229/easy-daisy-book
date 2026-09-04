@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#0052ff">
-<title>공간 회계장부</title>
+<title>㈜공간네트웍스 재무관리시스템</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
@@ -60,7 +60,8 @@ input[type=number]{-moz-appearance:textfield;}
 /* shell */
 #app{display:flex;height:100vh;min-height:560px;}
 .side{width:214px;flex:none;background:var(--surface);border-right:1px solid var(--rule);display:flex;flex-direction:column;padding:18px 0 12px;}
-.wm{font-family:var(--f-d);font-weight:700;font-size:18px;padding:0 18px 3px;letter-spacing:-.035em;color:var(--ink);}
+.wm{font-family:var(--f-d);font-weight:700;font-size:17px;padding:0 18px 4px;letter-spacing:-.035em;color:var(--ink);line-height:1.25;}
+.wm small{display:block;font-size:11.5px;font-weight:500;letter-spacing:-.01em;color:var(--accent);margin-bottom:1px;}
 .co{padding:0 18px 14px;font-size:12px;color:var(--ink-3);}
 .per{margin:0 12px 14px;}
 .per label{display:block;font-size:10.5px;font-family:var(--f-m);letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px;}
@@ -147,6 +148,14 @@ table.fs tr.grp td{background:var(--surface-3);font-weight:600;color:var(--ink-2
 table.fs tr.hd td{font-weight:600;}
 table.fs tr.sub td:first-child{padding-left:30px;color:var(--ink-2);}
 table.fs tr.tot td{border-top:1px solid var(--rule);border-bottom:2px solid var(--rule);background:var(--surface-3);font-weight:600;padding-top:8px;padding-bottom:8px;}
+table.fs.two th{font-size:10px;font-family:var(--f-m);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--ink-3);font-weight:500;padding:7px 14px;border-bottom:1px solid var(--rule);
+  background:var(--surface-3);text-align:left;}
+table.fs.two th.n{text-align:right;}
+table.fs.two td.n{width:118px;}
+table.fs.two td.n:last-child{font-weight:600;color:var(--ink);}
+table.fs.two tr.sub td.n:last-child{font-weight:500;}
+table.fs.two tr.zero td.n:last-child{color:var(--ink-4);font-weight:400;}
 table.fs td.n{width:140px;}
 .neg{color:var(--cr);}
 .chkbar{padding:10px 15px;border-top:1px solid var(--rule);background:var(--surface-3);font-size:12px;font-weight:600;display:flex;align-items:center;gap:8px;}
@@ -191,7 +200,7 @@ table.fs td.n{width:140px;}
 <body>
 <div id="app">
   <aside class="side">
-    <div class="wm">공간 회계장부</div>
+    <div class="wm"><small>㈜공간네트웍스</small>재무관리시스템</div>
     <div class="co" id="coName">회사 불러오는 중…</div>
     <div class="per">
       <label for="periodSel">기간</label>
@@ -326,7 +335,7 @@ var VIEWS = [
 var S = {
   co:{name:"㈜공간네트웍스", fyLabel:"제1기", fyStart:"2026-06-23"},
   accounts:[], vouchers:[], partners:[], period:"all", view:"entry",
-  plMode:"cum", db:null, dbState:"연결 중", draft:null, editId:null
+  db:null, dbState:"연결 중", draft:null, editId:null
 };
 
 /* ---------- 유틸 ---------- */
@@ -427,7 +436,7 @@ function balOf(row){
   return c.dn ? (row.dr-row.cr) : (row.cr-row.dr);
 }
 /* 손익: 누계/당월 */
-function plTally(){ return tally(S.plMode==="cum" ? upToPeriod : inPeriod); }
+function plTally(filter){ return tally(filter || upToPeriod); }
 function sumRange(m, lo, hi){
   var t=0; for(var k in m){ var c=parseInt(k,10); if(c>=lo && c<=hi) t+=balOf(m[k]); } return t;
 }
@@ -930,8 +939,8 @@ function buildBS(){
   tE += ni;
   return {rows:rows, tA:tA, tL:tL, tE:tE, ni:ni, diff:tA-(tL+tE)};
 }
-function buildPL(){
-  var m=plTally();
+function buildPL(filter){
+  var m=plTally(filter);
   var sales=sumRange(m,4000000,4499999), cogs=sumRange(m,4500000,4999999);
   var gross=sales-cogs;
   var sga=sumRange(m,8000000,8999999);
@@ -945,6 +954,36 @@ function buildPL(){
   return {sales:sales, cogs:cogs, gross:gross, sga:sga, op:op, ni:ni_, ne:ne, pre:pre, net:pre,
     iSales:items(4000000,4499999), iCogs:items(4500000,4999999), iSga:items(8000000,8999999),
     iNi:items(9000000,9309999), iNe:items(9310000,9999999)};
+}
+function fsTable2(sections, totalLabel, totA, totB, headA, headB){
+  var tab=el("table",{class:"fs two"}), th=el("thead"), tb=el("tbody");
+  var hr=el("tr");
+  hr.appendChild(el("th",{text:"계정과목"}));
+  hr.appendChild(el("th",{class:"n", text:headA}));
+  hr.appendChild(el("th",{class:"n", text:headB}));
+  th.appendChild(hr); tab.appendChild(th);
+  function cell(v){ return el("td",{class:"n"+(v<0?" neg":""), text:fmt0(v)}); }
+  sections.forEach(function(s){
+    if(s.head){ tb.appendChild(el("tr",{class:"grp"},[el("td",{colspan:"3", text:s.head})])); return; }
+    var tr=el("tr",{class:"hd"});
+    tr.appendChild(el("td",{text:s.title}));
+    tr.appendChild(cell(s.a)); tr.appendChild(cell(s.b));
+    tb.appendChild(tr);
+    (s.items||[]).forEach(function(it){
+      var z=Math.abs(it.a)<0.5 && Math.abs(it.b)<0.5;
+      var r=el("tr",{class:"sub"+(z?" zero":"")});
+      r.appendChild(el("td",{text:it.name}));
+      r.appendChild(cell(it.a)); r.appendChild(cell(it.b));
+      tb.appendChild(r);
+    });
+  });
+  if(totalLabel){
+    var t=el("tr",{class:"tot"});
+    t.appendChild(el("td",{text:totalLabel}));
+    t.appendChild(cell(totA)); t.appendChild(cell(totB));
+    tb.appendChild(t);
+  }
+  tab.appendChild(tb); return tab;
 }
 function fsTable(sections, totalLabel, totalVal){
   var tab=el("table",{class:"fs"}), tb=el("tbody");
@@ -972,7 +1011,7 @@ function fsTable(sections, totalLabel, totalVal){
 }
 function viewFS(){
   var wrap=el("div");
-  var bs=buildBS(), pl=buildPL();
+  var bs=buildBS();
   var grid=el("div",{class:"fs2"});
 
   /* BS */
@@ -1023,31 +1062,41 @@ function viewFS(){
     +'<span class="sp"></span><span class="m" style="font-weight:500;color:var(--ink-3)">차이 '+fmt0(bs.diff)+"</span>"}));
   grid.appendChild(cB);
 
-  /* PL */
+  /* PL — 당월 + 누계 2단 */
+  var plM = buildPL(inPeriod), plC = buildPL(upToPeriod);
+  var whole = (S.period==="all");
   var cP=el("div",{class:"card"});
-  var segP=el("span",{class:"seg"});
-  ["cum","mon"].forEach(function(k){
-    var b=el("button",{class:(S.plMode===k?"on":""), text:(k==="cum"?"누계":"당월")});
-    b.addEventListener("click", function(){ S.plMode=k; renderView(); });
-    segP.appendChild(b);
-  });
-  cP.appendChild(el("div",{class:"ch"},[el("span",{text:"손익계산서"}), segP]));
-  var pTab=fsTable([
-    {title:"Ⅰ. 매출액", value:pl.sales, items:pl.iSales},
-    {title:"Ⅱ. 매출원가", value:pl.cogs, items:pl.iCogs},
-    {title:"Ⅲ. 매출총이익", value:pl.gross},
+  cP.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"손익계산서"}),
+    el("span",{class:"tag b", text: whole ? "전체 기간"
+      : (S.period+" 당월 · "+String(S.co.fyStart||"").slice(0,7)+" 부터 누계")})
+  ]));
+  function pair(key, ik){
+    return {a:plM[key], b:plC[key], items:(ik? plM[ik].map(function(it,i){
+      return {code:it.code, name:it.name, a:it.bal, b:plC[ik][i]?plC[ik][i].bal:0};
+    }) : null)};
+  }
+  function sec(title, key, ik){
+    var p=pair(key, ik);
+    return {title:title, a:p.a, b:p.b, items:p.items};
+  }
+  var pTab=fsTable2([
+    sec("Ⅰ. 매출액", "sales", "iSales"),
+    sec("Ⅱ. 매출원가", "cogs", "iCogs"),
+    sec("Ⅲ. 매출총이익", "gross"),
     {head:"판매비와 관리비"},
-    {title:"Ⅳ. 판매관리비", value:pl.sga, items:pl.iSga},
-    {title:"Ⅴ. 영업이익", value:pl.op},
+    sec("Ⅳ. 판매관리비", "sga", "iSga"),
+    sec("Ⅴ. 영업이익", "op"),
     {head:"영업외"},
-    {title:"Ⅵ. 영업외수익", value:pl.ni, items:pl.iNi},
-    {title:"Ⅶ. 영업외비용", value:pl.ne, items:pl.iNe},
-    {title:"Ⅷ. 법인세비용차감전순손익", value:pl.pre}
-  ], "Ⅸ. 당기순손익", pl.net);
+    sec("Ⅵ. 영업외수익", "ni", "iNi"),
+    sec("Ⅶ. 영업외비용", "ne", "iNe"),
+    sec("Ⅷ. 법인세비용차감전순손익", "pre")
+  ], "Ⅸ. 당기순손익", plM.net, plC.net,
+     whole ? "금액" : "당월", whole ? "동일" : "누계");
   cP.appendChild(pTab);
-  cP.appendChild(el("div",{class:"note", text:
-    S.plMode==="cum" ? "사업연도 시작부터 선택한 달까지 누계입니다. 재무상태표의 이익잉여금과 같은 기준입니다."
-                     : "선택한 달에 작성된 전표만 집계합니다."}));
+  cP.appendChild(el("div",{class:"note", text: whole
+    ? "기간을 「전체」로 두셔서 당월과 누계가 같습니다. 왼쪽 위에서 달을 고르시면 그 달과 누계가 나뉘어 보입니다."
+    : "「당월」은 "+S.period+"에 작성한 전표만, 「누계」는 사업연도 시작부터 "+S.period+"까지 전부입니다. 누계 당기순손익이 재무상태표의 이익잉여금과 같습니다."}));
   grid.appendChild(cP);
   wrap.appendChild(grid);
   return wrap;
