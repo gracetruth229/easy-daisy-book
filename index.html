@@ -162,6 +162,7 @@ td.mut{color:var(--ink-3);}
 .f label{font-size:10.5px;color:var(--ink-3);font-weight:500;}
 .f.s2{grid-column:span 2;} .f.s3{grid-column:span 3;} .f.s4{grid-column:span 4;}
 .f.s5{grid-column:span 5;} .f.s6{grid-column:span 6;} .f.s12{grid-column:span 12;}
+table.lines{min-width:880px;}
 table.lines td{padding:5px 8px;}
 table.lines th{padding:7px 8px;}
 table.lines input,table.lines select{height:30px;width:100%;font-size:12.5px;}
@@ -663,12 +664,6 @@ function viewEntry(){
   });
   wrap.appendChild(dl);
 
-  var dlj=el("datalist",{id:"projectNames"});
-  S.projects.forEach(function(p){
-    dlj.appendChild(el("option",{value:p.name, label:p.memo||""}));
-  });
-  wrap.appendChild(dlj);
-
   var head=el("div",{class:"card"});
   head.appendChild(el("div",{class:"ch"},[
     el("span",{text:S.editId?"전표 수정":"새 전표"}),
@@ -709,15 +704,36 @@ function viewEntry(){
     var td1=el("td"); td1.appendChild(accountSelect(l.code, function(v){ l.code=v; })); tr.appendChild(td1);
 
     var tdJ=el("td");
-    var jInp=el("input",{type:"text", value:l.project||"", list:"projectNames",
-                         placeholder:"공통 등", autocomplete:"off"});
-    jInp.addEventListener("input", function(){ l.project=jInp.value; });
-    tdJ.appendChild(jInp); tr.appendChild(tdJ);
+    var jSel=el("select",{});
+    jSel.appendChild(el("option",{value:"", text:"— 없음 —"}));
+    S.projects.forEach(function(p){
+      jSel.appendChild(el("option",{value:p.name, text:p.name}));
+    });
+    if(l.project && !findProject(l.project)){
+      jSel.appendChild(el("option",{value:l.project, text:l.project+" (목록에 없음)"}));
+    }
+    jSel.appendChild(el("option",{value:"__new__", text:"＋ 새 프로젝트…"}));
+    jSel.value = l.project || "";
+    jSel.addEventListener("change", function(){
+      if(jSel.value === "__new__"){
+        var nm = prompt("새 프로젝트 이름");
+        if(nm === null || !String(nm).trim()){ jSel.value = l.project || ""; return; }
+        nm = String(nm).trim();
+        if(!findProject(nm)){
+          S.projects.push({name:nm, memo:"전표에서 등록"});
+          persistProjects();
+          toast("프로젝트 「"+nm+"」을 만들었습니다");
+        }
+        l.project = nm; renderView(); return;
+      }
+      l.project = jSel.value;
+    });
+    tdJ.appendChild(jSel); tr.appendChild(tdJ);
 
     var bizInp=null;
     var tdP=el("td");
     var pInp=el("input",{type:"text", value:l.partner||"", list:"partnerNames",
-                         placeholder:"이름 입력 또는 목록에서", autocomplete:"off"});
+                         placeholder:"입력하면 목록이 떠요", autocomplete:"off"});
     pInp.addEventListener("input", function(){
       l.partner=pInp.value;
       var hit=findPartner(pInp.value);
