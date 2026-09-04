@@ -118,6 +118,18 @@ input[type=number]{-moz-appearance:textfield;}
 .seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden;}
 .seg button{height:30px;padding:0 11px;border:0;background:var(--surface);font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer;}
 .seg button+button{border-left:1px solid var(--rule);}
+.ldbar{display:flex;align-items:center;gap:9px;margin-bottom:13px;flex-wrap:wrap;}
+.ldbar .sp{flex:1;}
+.ldbar .cntx{font-size:12.5px;color:var(--ink-3);font-family:var(--f-m);white-space:nowrap;}
+.ldbar .seg button{display:inline-flex;align-items:center;gap:6px;}
+.ldbar .seg button .c{font-family:var(--f-m);font-size:10.5px;font-weight:700;
+  background:var(--accent-soft);color:var(--accent-deep);border-radius:999px;padding:0 6px;line-height:16px;}
+.ldbar .seg button.on .c{background:rgba(255,255,255,.26);color:#fff;}
+.srch{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 12px;
+  border:1px solid var(--rule);border-radius:999px;background:var(--surface);color:var(--ink-3);min-width:232px;}
+.srch svg{flex:none;}
+.srch input{border:0;background:transparent;height:30px;padding:0;flex:1;min-width:0;font-size:13px;}
+.srch input:focus{box-shadow:none;outline:none;}
 .seg button.on{background:var(--accent);color:var(--on-accent);}
 
 .card{background:var(--surface);border:1px solid var(--rule);border-radius:9px;overflow:hidden;}
@@ -435,7 +447,7 @@ var VIEWS = [
 var S = {
   co:{name:"㈜공간네트웍스", fyLabel:"제1기", fyStart:"2026-06-23"},
   accounts:[], vouchers:[], partners:[], period:"all", view:"entry",
-  db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null
+  db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:""
 };
 
 /* ---------- 유틸 ---------- */
@@ -896,11 +908,69 @@ function saveDraft(){
 }
 
 /* ---------- 전표장 ---------- */
+function voucherText(v){
+  var t=[v.date||"", v.type||"", v.memo||""];
+  (v.lines||[]).forEach(function(l){
+    t.push(l.code||"", l.name||"", l.partner||"", l.bizno||"", l.memo||"");
+  });
+  return t.join(" ").toLowerCase();
+}
 function viewLedger(){
   var wrap=el("div");
-  var list=periodVouchers().slice().sort(function(a,b){
+  var base=periodVouchers().slice().sort(function(a,b){
     return (a.date||"").localeCompare(b.date||"") || (a.id||"").localeCompare(b.id||"");
   });
+
+  /* 거래종류별 개수 */
+  var cnt={all:base.length};
+  VTYPES.forEach(function(t){ cnt[t]=0; });
+  base.forEach(function(v){ if(cnt[v.type]!==undefined) cnt[v.type]++; });
+
+  var q=String(S.ldQ||"").trim().toLowerCase();
+  var list=base.filter(function(v){
+    if(S.ldType!=="all" && v.type!==S.ldType) return false;
+    if(q && voucherText(v).indexOf(q)<0) return false;
+    return true;
+  });
+
+  /* 필터 바 */
+  var bar=el("div",{class:"ldbar"});
+  var seg=el("span",{class:"seg"});
+  [["all","전체"]].concat(VTYPES.map(function(t){ return [t,t]; })).forEach(function(pair){
+    var k=pair[0], label=pair[1];
+    var b=el("button",{class:(S.ldType===k?"on":"")});
+    b.appendChild(el("span",{text:label}));
+    b.appendChild(el("span",{class:"c", text:String(cnt[k]||0)}));
+    b.addEventListener("click", function(){ S.ldType=k; renderView(); });
+    seg.appendChild(b);
+  });
+  bar.appendChild(seg);
+
+  var sw=el("span",{class:"srch"});
+  sw.innerHTML = svg("M9 14.4a5.4 5.4 0 100-10.8 5.4 5.4 0 000 10.8zM13.4 13.4L17 17",15);
+  var si=el("input",{type:"text", value:S.ldQ||"", placeholder:"적요·거래처·계정으로 찾기"});
+  si.addEventListener("input", function(){
+    S.ldQ=si.value;
+    clearTimeout(si._t);
+    si._t=setTimeout(function(){
+      var pos=si.selectionStart; renderView();
+      var n=document.querySelector(".srch input");
+      if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
+    }, 220);
+  });
+  sw.appendChild(si);
+  bar.appendChild(sw);
+
+  if(S.ldType!=="all" || q){
+    var clr=el("button",{class:"btn sm", text:"필터 해제"});
+    clr.addEventListener("click", function(){ S.ldType="all"; S.ldQ=""; renderView(); });
+    bar.appendChild(clr);
+  }
+  bar.appendChild(el("span",{class:"sp"}));
+  bar.appendChild(el("span",{class:"cntx", text:
+    (S.ldType==="all" && !q) ? ("전표 "+base.length+"장")
+      : ("전표 "+base.length+"장 중 "+list.length+"장")}));
+  wrap.appendChild(bar);
   var rev=reversedIds();
   var dr=0, cr=0;
   list.forEach(function(v){ (v.lines||[]).forEach(function(l){ dr+=(+l.dr||0); cr+=(+l.cr||0); }); });
@@ -908,13 +978,16 @@ function viewLedger(){
 
   if(!list.length){
     var c0=el("div",{class:"card"});
-    c0.appendChild(el("div",{class:"empty", html:"<b>이 기간에 전표가 없습니다</b>왼쪽 「전표 입력」에서 첫 전표를 만들어 보세요."}));
+    c0.appendChild(el("div",{class:"empty", html: base.length
+      ? "<b>조건에 맞는 전표가 없습니다</b>거래종류를 「전체」로 바꾸시거나 검색어를 지워 보세요."
+      : "<b>이 기간에 전표가 없습니다</b>왼쪽 「전표 입력」에서 첫 전표를 만들어 보세요."}));
     wrap.appendChild(c0); return wrap;
   }
 
   var card=el("div",{class:"card"});
   card.appendChild(el("div",{class:"ch"},[
-    el("span",{text:"전표장 · "+(S.period==="all"?"전체 기간":S.period)}),
+    el("span",{text:"전표장 · "+(S.period==="all"?"전체 기간":S.period)
+      +(S.ldType==="all"?"":" · "+S.ldType)}),
     el("span",{class:"r"},[el("span",{class:"tag "+(ok?"g":"c"), text: ok?"대차 일치":"차액 "+fmt0(diff)})])
   ]));
   var tw=el("div",{class:"tw"}), tab=el("table");
@@ -974,7 +1047,7 @@ function viewLedger(){
     });
   });
   var ftr=el("tr");
-  ftr.appendChild(el("td",{colspan:"5", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:"합계 · 전표 "+list.length+"장"}));
+  ftr.appendChild(el("td",{colspan:"5", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:(S.ldType==="all"&&!q ? "합계 · 전표 "+list.length+"장" : "고른 전표 "+list.length+"장 합계")}));
   ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(dr)}));
   ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(cr)}));
   ftr.appendChild(el("td",{style:"background:var(--surface-3);border-top:1px solid var(--rule);"}));
@@ -982,7 +1055,8 @@ function viewLedger(){
   tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
   card.appendChild(el("div",{class:"chkbar "+(ok?"ok":"bad"), html:
     svg(ok?"M4 10.4l4 4 8-9":"M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",15)
-    + "<span>"+(ok?"차변 합계와 대변 합계가 같습니다":"대차가 "+fmt0(Math.abs(diff))+"원 맞지 않습니다")+"</span>"}));
+    + "<span>"+(ok?("차변 합계와 대변 합계가 같습니다"+((S.ldType==="all"&&!q)?"":" (고른 전표 기준)"))
+                 :"대차가 "+fmt0(Math.abs(diff))+"원 맞지 않습니다")+"</span>"}));
   card.appendChild(el("div",{class:"note", text:
     "저장한 전표는 잠깁니다. 오타처럼 사소한 것은 「잠금 해제」 후 고치시면 되고, 고친 횟수와 날짜가 전표에 남습니다. 거래 자체가 잘못됐다면 고치지 말고 「역분개」로 취소 전표를 만드세요 — 원래 기록이 남아야 세무사가 흐름을 따라올 수 있습니다. 전표를 지우는 기능은 없습니다."}));
   wrap.appendChild(card);
