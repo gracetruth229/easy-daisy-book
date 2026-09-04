@@ -438,6 +438,7 @@ var VIEWS = [
   {k:"ledger",   t:"전표장",    ic:"M6 5.5h11M6 10h11M6 14.5h11M3 5.5h.01M3 10h.01M3 14.5h.01"},
   {k:"pivot",    t:"집계표",    ic:"M3 16.4h14M5.6 16.4V9.6M10 16.4V4.4M14.4 16.4v-4.6"},
   {k:"fs",       t:"재무제표",  ic:"M5 3h10v14H5zM8 7h4M8 10h4M8 13h2"},
+  {k:"projects", t:"프로젝트",  ic:"M3.5 6.5h5l1.6 2h10.4v9a1.6 1.6 0 01-1.6 1.6H5.1A1.6 1.6 0 013.5 17.5z"},
   {k:"partners", t:"거래처",    ic:"M7 9.2a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2zM2.6 16.4c0-2.6 2-4.2 4.4-4.2s4.4 1.6 4.4 4.2M13.4 8.6a2.2 2.2 0 100-4.4M14.2 12.4c2 .3 3.2 1.8 3.2 4"},
   {k:"accounts", t:"계정과목",  ic:"M4 6h12M4 10h12M4 14h7"},
   {k:"export",   t:"내보내기",  ic:"M10 3v9M6.5 8.5L10 12l3.5-3.5M4 15.5h12"}
@@ -446,7 +447,7 @@ var VIEWS = [
 /* ---------- 상태 ---------- */
 var S = {
   co:{name:"㈜공간네트웍스", fyLabel:"제1기", fyStart:"2026-06-23"},
-  accounts:[], vouchers:[], partners:[], period:"all", view:"entry",
+  accounts:[], vouchers:[], partners:[], projects:[], period:"all", view:"entry",
   db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:""
 };
 
@@ -499,6 +500,30 @@ function findPartner(name){
   if(!k) return null;
   for(var i=0;i<S.partners.length;i++) if(S.partners[i].name===k) return S.partners[i];
   return null;
+}
+function findProject(name){
+  var k=String(name||"").trim();
+  if(!k) return null;
+  for(var i=0;i<S.projects.length;i++) if(S.projects[i].name===k) return S.projects[i];
+  return null;
+}
+function projectUsage(){
+  var u={};
+  S.vouchers.forEach(function(v){
+    (v.lines||[]).forEach(function(l){
+      var nm=String(l.project||"").trim(); if(!nm) return;
+      if(!u[nm]) u[nm]={n:0, last:"", dr:0, cr:0, pl:0};
+      u[nm].n++;
+      if((v.date||"")>u[nm].last) u[nm].last=v.date||"";
+      u[nm].dr+=(+l.dr||0); u[nm].cr+=(+l.cr||0);
+      var c=parseInt(l.code,10);
+      if(c>=4000000 && c<=9999999){
+        var cat=catOf(l.code);
+        u[nm].pl += cat.dn ? -((+l.dr||0)-(+l.cr||0)) : ((+l.cr||0)-(+l.dr||0));
+      }
+    });
+  });
+  return u;
 }
 function partnerUsage(){
   var u={};
@@ -577,6 +602,7 @@ function renderNav(){
     if(v.k==="ledger") ct=String(periodVouchers().length);
     if(v.k==="accounts") ct=String(S.accounts.length);
     if(v.k==="partners") ct=String(S.partners.length);
+    if(v.k==="projects") ct=String(S.projects.length);
     var b=el("button",{class:(S.view===v.k?"on":""), html:svg(v.ic)+"<span>"+v.t+"</span>"+(ct?'<span class="ct">'+ct+"</span>":"")});
     b.addEventListener("click", function(){ S.view=v.k; render(); });
     nav.appendChild(b);
@@ -605,7 +631,7 @@ function globalBalance(){
 }
 
 /* ---------- 전표 입력 ---------- */
-function blankLine(){ return {code:"", partner:"", bizno:"", memo:"", dr:"", cr:""}; }
+function blankLine(){ return {code:"", project:"", partner:"", bizno:"", memo:"", dr:"", cr:""}; }
 function newDraft(){
   return {date:todayISO(), type:"은행거래", memo:"", lines:[blankLine(), blankLine()]};
 }
@@ -636,6 +662,12 @@ function viewEntry(){
     dl.appendChild(el("option",{value:p.name, label:(p.kind||"")+(p.bizno?" · "+bizFormat(p.bizno):"")}));
   });
   wrap.appendChild(dl);
+
+  var dlj=el("datalist",{id:"projectNames"});
+  S.projects.forEach(function(p){
+    dlj.appendChild(el("option",{value:p.name, label:p.memo||""}));
+  });
+  wrap.appendChild(dlj);
 
   var head=el("div",{class:"card"});
   head.appendChild(el("div",{class:"ch"},[
@@ -668,13 +700,20 @@ function viewEntry(){
   /* 줄 */
   var tw=el("div",{class:"tw"});
   var tb=el("table",{class:"lines"});
-  tb.innerHTML='<thead><tr><th style="width:210px">계정과목</th><th style="width:130px">거래처</th>'
-    +'<th style="width:120px">사업자번호</th><th>적요</th>'
-    +'<th class="n" style="width:120px">차변</th><th class="n" style="width:120px">대변</th><th></th></tr></thead>';
+  tb.innerHTML='<thead><tr><th style="width:190px">계정과목</th><th style="width:112px">프로젝트</th>'
+    +'<th style="width:120px">거래처</th><th style="width:116px">사업자번호</th><th>적요</th>'
+    +'<th class="n" style="width:114px">차변</th><th class="n" style="width:114px">대변</th><th></th></tr></thead>';
   var body=el("tbody");
   d.lines.forEach(function(l, i){
     var tr=el("tr");
     var td1=el("td"); td1.appendChild(accountSelect(l.code, function(v){ l.code=v; })); tr.appendChild(td1);
+
+    var tdJ=el("td");
+    var jInp=el("input",{type:"text", value:l.project||"", list:"projectNames",
+                         placeholder:"공통 등", autocomplete:"off"});
+    jInp.addEventListener("input", function(){ l.project=jInp.value; });
+    tdJ.appendChild(jInp); tr.appendChild(tdJ);
+
     var bizInp=null;
     var tdP=el("td");
     var pInp=el("input",{type:"text", value:l.partner||"", list:"partnerNames",
@@ -808,7 +847,8 @@ function reverseVoucher(v){
   if(!confirm(msg)) return;
   var today = todayISO();
   var lines = (v.lines||[]).map(function(l){
-    return {code:l.code, name:l.name||accName(l.code), partner:l.partner||"", bizno:l.bizno||"",
+    return {code:l.code, name:l.name||accName(l.code), project:l.project||"",
+            partner:l.partner||"", bizno:l.bizno||"",
             memo:"취소: " + (l.memo||v.memo||""), dr:(+l.cr||0), cr:(+l.dr||0)};
   });
   var id = today.replace(/-/g,"") + "-" + Math.random().toString(36).slice(2,8);
@@ -846,8 +886,8 @@ function loadForEdit(v){
   S.editId = v.id;
   S.draft = {date:v.date, type:v.type, memo:v.memo||"",
     lines:(v.lines||[]).map(function(l){
-      return {code:l.code||"", partner:l.partner||"", bizno:l.bizno||"", memo:l.memo||"",
-              dr:(+l.dr||0)||"", cr:(+l.cr||0)||""};
+      return {code:l.code||"", project:l.project||"", partner:l.partner||"", bizno:l.bizno||"",
+              memo:l.memo||"", dr:(+l.dr||0)||"", cr:(+l.cr||0)||""};
     })};
   if(!S.draft.lines.length) S.draft.lines=[blankLine(), blankLine()];
   S.view="entry"; render();
@@ -856,8 +896,8 @@ function loadForEdit(v){
 function copyToDraft(v){
   S.draft = {date: todayISO(), type: v.type || "은행거래", memo: v.memo || "",
     lines: (v.lines||[]).map(function(l){
-      return {code:l.code||"", partner:l.partner||"", bizno:l.bizno||"", memo:l.memo||"",
-              dr:(+l.dr||0)||"", cr:(+l.cr||0)||""};
+      return {code:l.code||"", project:l.project||"", partner:l.partner||"", bizno:l.bizno||"",
+              memo:l.memo||"", dr:(+l.dr||0)||"", cr:(+l.cr||0)||""};
     })};
   if(!S.draft.lines.length) S.draft.lines=[blankLine(), blankLine()];
   S.view="entry"; render();
@@ -869,10 +909,21 @@ function saveDraft(){
   if(Math.abs(t.diff)>=0.5 || t.dr<=0){ toast("차변과 대변이 맞아야 저장됩니다"); return; }
   var lines=d.lines.filter(function(l){ return l.code && ((+l.dr||0)!==0 || (+l.cr||0)!==0); })
     .map(function(l){
-      return {code:l.code, name:accName(l.code), partner:l.partner||"", bizno:l.bizno||"",
+      return {code:l.code, name:accName(l.code), project:(l.project||"").trim(),
+              partner:l.partner||"", bizno:l.bizno||"",
               memo:l.memo||d.memo||"", dr:+l.dr||0, cr:+l.cr||0};
     });
   if(lines.length<2){ toast("계정과 금액이 있는 줄이 두 줄 이상이어야 합니다"); return; }
+  var freshJ={};
+  lines.forEach(function(l){
+    var jn=String(l.project||"").trim();
+    if(jn && !findProject(jn)) freshJ[jn]=1;
+  });
+  var freshJNames=Object.keys(freshJ);
+  if(freshJNames.length && confirm("프로젝트 목록에 없는 이름이 있습니다.\n\n" + freshJNames.join(", ") + "\n\n프로젝트로 등록해 둘까요?")){
+    freshJNames.forEach(function(nm){ S.projects.push({name:nm, memo:"전표에서 등록"}); });
+    persistProjects();
+  }
   var fresh={};
   lines.forEach(function(l){
     var nm=String(l.partner||"").trim();
@@ -911,7 +962,7 @@ function saveDraft(){
 function voucherText(v){
   var t=[v.date||"", v.type||"", v.memo||""];
   (v.lines||[]).forEach(function(l){
-    t.push(l.code||"", l.name||"", l.partner||"", l.bizno||"", l.memo||"");
+    t.push(l.code||"", l.name||"", l.project||"", l.partner||"", l.bizno||"", l.memo||"");
   });
   return t.join(" ").toLowerCase();
 }
@@ -991,14 +1042,15 @@ function viewLedger(){
     el("span",{class:"r"},[el("span",{class:"tag "+(ok?"g":"c"), text: ok?"대차 일치":"차액 "+fmt0(diff)})])
   ]));
   var tw=el("div",{class:"tw"}), tab=el("table");
-  tab.innerHTML='<thead><tr><th style="width:74px">코드</th><th style="width:170px">계정과목</th>'
-    +'<th style="width:120px">거래처</th><th style="width:118px">사업자번호</th><th>적요</th>'
-    +'<th class="n" style="width:120px">차변</th><th class="n" style="width:120px">대변</th><th style="width:112px"></th></tr></thead>';
+  tab.innerHTML='<thead><tr><th style="width:74px">코드</th><th style="width:160px">계정과목</th>'
+    +'<th style="width:104px">프로젝트</th><th style="width:118px">거래처</th>'
+    +'<th style="width:114px">사업자번호</th><th>적요</th>'
+    +'<th class="n" style="width:118px">차변</th><th class="n" style="width:118px">대변</th><th style="width:112px"></th></tr></thead>';
   var tb=el("tbody");
   list.forEach(function(v){
     var vd=0; (v.lines||[]).forEach(function(l){ vd+=(+l.dr||0); });
     var gtr=el("tr",{class:"grp"});
-    var gtd=el("td",{colspan:"8", style:"background:var(--surface-3);padding:7px 12px;border-top:1px solid var(--rule-soft);"});
+    var gtd=el("td",{colspan:"9", style:"background:var(--surface-3);padding:7px 12px;border-top:1px solid var(--rule-soft);"});
     var box=el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;"});
     box.appendChild(el("span",{class:"m", style:"color:var(--ink-3);font-size:11.5px;", text:v.date}));
     box.appendChild(el("span",{class:"tag b", text:v.type||"—"}));
@@ -1037,6 +1089,10 @@ function viewLedger(){
       var tr=el("tr");
       tr.appendChild(el("td",{class:"c", text:String(l.code||"").slice(0,3)}));
       tr.appendChild(el("td",{text:l.name||accName(l.code)}));
+      var tdpj=el("td",{class:"mut"});
+      if(l.project) tdpj.appendChild(el("span",{class:"tag b", text:l.project}));
+      else tdpj.appendChild(el("span",{class:"zero", text:"—"}));
+      tr.appendChild(tdpj);
       tr.appendChild(el("td",{class:"mut", text:l.partner||"—"}));
       tr.appendChild(el("td",{class:"c", text:l.bizno||"—"}));
       tr.appendChild(el("td",{class:"mut", text:l.memo||""}));
@@ -1047,7 +1103,7 @@ function viewLedger(){
     });
   });
   var ftr=el("tr");
-  ftr.appendChild(el("td",{colspan:"5", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:(S.ldType==="all"&&!q ? "합계 · 전표 "+list.length+"장" : "고른 전표 "+list.length+"장 합계")}));
+  ftr.appendChild(el("td",{colspan:"6", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:(S.ldType==="all"&&!q ? "합계 · 전표 "+list.length+"장" : "고른 전표 "+list.length+"장 합계")}));
   ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(dr)}));
   ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(cr)}));
   ftr.appendChild(el("td",{style:"background:var(--surface-3);border-top:1px solid var(--rule);"}));
@@ -1332,6 +1388,90 @@ function viewFS(){
   return wrap;
 }
 
+/* ---------- 프로젝트 ---------- */
+function viewProjects(){
+  var wrap=el("div"), use=projectUsage();
+
+  var known={}; S.projects.forEach(function(p){ known[p.name]=1; });
+  var unknown=Object.keys(use).filter(function(n){ return !known[n]; })
+    .sort(function(a,b){ return use[b].n-use[a].n; });
+
+  if(unknown.length){
+    var bn=el("div",{class:"banner w"});
+    bn.innerHTML = svg("M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",17)
+      + "<span><b>전표에는 쓰였는데 프로젝트 목록에 없는 이름이 " + unknown.length + "개 있습니다.</b> "
+      + esc(unknown.slice(0,6).join(", ")) + "</span>";
+    var addAll=el("button",{class:"btn sm", style:"margin-left:auto;flex:none;", text:"한꺼번에 등록"});
+    addAll.addEventListener("click", function(){
+      unknown.forEach(function(n){ S.projects.push({name:n, memo:"전표에서 자동 등록"}); });
+      persistProjects(); toast(unknown.length+"개를 등록했습니다"); render();
+    });
+    bn.appendChild(addAll); wrap.appendChild(bn);
+  }
+
+  var card=el("div",{class:"card"});
+  var addBtn=el("button",{class:"btn sm pri", html:svg("M10 5v10M5 10h10",13)+"<span>프로젝트 추가</span>"});
+  addBtn.addEventListener("click", function(){
+    var nm=prompt("프로젝트 이름"); if(nm===null) return;
+    nm=String(nm).trim(); if(!nm){ toast("이름을 넣어 주세요"); return; }
+    if(findProject(nm)){ toast("같은 이름이 이미 있습니다"); return; }
+    var mm=prompt("설명 (없으면 비워 두세요)", ""); if(mm===null) mm="";
+    S.projects.push({name:nm, memo:String(mm).trim()});
+    persistProjects(); toast("추가했습니다"); render();
+  });
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"프로젝트 "+S.projects.length+"개"}), addBtn
+  ]));
+
+  if(!S.projects.length){
+    card.appendChild(el("div",{class:"empty", html:"<b>등록된 프로젝트가 없습니다</b>프로젝트를 만들어 두면 전표 줄마다 골라 넣을 수 있고, 프로젝트별로 얼마를 썼는지 여기서 바로 보입니다."}));
+    wrap.appendChild(card); return wrap;
+  }
+
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:190px">프로젝트</th><th>설명</th>'
+    +'<th class="n" style="width:76px">줄</th><th class="n" style="width:130px">차변</th>'
+    +'<th class="n" style="width:130px">대변</th><th class="n" style="width:130px">손익</th>'
+    +'<th style="width:100px">최근</th><th style="width:126px"></th></tr></thead>';
+  var tb=el("tbody");
+  S.projects.forEach(function(p, i){
+    var u=use[p.name] || {n:0,last:"",dr:0,cr:0,pl:0};
+    var tr=el("tr");
+    tr.appendChild(el("td",{style:"font-weight:600;", text:p.name}));
+    tr.appendChild(el("td",{class:"mut", text:p.memo||""}));
+    tr.appendChild(el("td",{class:"n"+(u.n?"":" zero"), text:u.n?String(u.n):"—"}));
+    tr.appendChild(el("td",{class:"n"+(u.dr?" dr":" zero"), text:u.dr?fmt0(u.dr):"—"}));
+    tr.appendChild(el("td",{class:"n"+(u.cr?" cr":" zero"), text:u.cr?fmt0(u.cr):"—"}));
+    tr.appendChild(el("td",{class:"n"+(u.pl<0?" neg":"")+(u.pl?"":" zero"), text:u.pl?fmt0(u.pl):"—"}));
+    tr.appendChild(el("td",{class:"c", text:u.last||"—"}));
+    var ta=el("td");
+    var eb=el("button",{class:"btn sm", text:"수정"});
+    eb.addEventListener("click", function(){
+      var nm=prompt("프로젝트 이름", p.name); if(nm===null) return;
+      nm=String(nm).trim(); if(!nm) return;
+      var dup=findProject(nm);
+      if(dup && dup.name!==p.name){ toast("같은 이름이 이미 있습니다"); return; }
+      var mm=prompt("설명", p.memo||""); if(mm===null) return;
+      S.projects[i]={name:nm, memo:String(mm).trim()};
+      persistProjects(); render();
+    });
+    ta.appendChild(eb);
+    if(!u.n){
+      var db_=el("button",{class:"btn sm danger", style:"margin-left:5px;", text:"삭제"});
+      db_.addEventListener("click", function(){
+        if(!confirm("프로젝트 「"+p.name+"」을 지울까요?")) return;
+        S.projects.splice(i,1); persistProjects(); render();
+      });
+      ta.appendChild(db_);
+    }
+    tr.appendChild(ta); tb.appendChild(tr);
+  });
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  card.appendChild(el("div",{class:"note", text:"「손익」은 그 프로젝트에 달린 매출·비용 줄만 모은 값입니다 (자산·부채 줄은 빼고 계산). 전표에 쓰인 프로젝트는 지울 수 없습니다."}));
+  wrap.appendChild(card);
+  return wrap;
+}
+
 /* ---------- 거래처 ---------- */
 var PKINDS = ["매입처","매출처","계좌","은행","임직원","기타"];
 function partnerForm(p, onSave){
@@ -1502,12 +1642,13 @@ function csvOf(rows){
   }).join("\r\n");
 }
 function rowsVouchers(){
-  var out=[["작성일","전표유형","계정코드","더존코드","계정과목","거래처","사업자번호","적요","차변","대변"]];
+  var out=[["작성일","전표유형","계정코드","더존코드","계정과목","프로젝트","거래처","사업자번호","적요","차변","대변"]];
   periodVouchers().slice().sort(function(a,b){ return (a.date||"").localeCompare(b.date||""); })
     .forEach(function(v){
       (v.lines||[]).forEach(function(l){
         out.push([v.date, v.type, l.code, String(l.code||"").slice(0,3), l.name||accName(l.code),
-                  l.partner||"", l.bizno||"", l.memo||v.memo||"", (+l.dr||0)||"", (+l.cr||0)||""]);
+                  l.project||"", l.partner||"", l.bizno||"", l.memo||v.memo||"",
+                  (+l.dr||0)||"", (+l.cr||0)||""]);
       });
     });
   return out;
@@ -1566,6 +1707,15 @@ function rowsPL(){
   push("Ⅶ. 영업외비용","ne","iNe");
   push("Ⅷ. 법인세비용차감전순손익","pre");
   push("Ⅸ. 당기순손익","net");
+  return out;
+}
+function rowsProjects(){
+  var use=projectUsage();
+  var out=[["프로젝트","설명","줄수","차변","대변","손익","최근 거래일"]];
+  S.projects.forEach(function(p){
+    var u=use[p.name]||{n:0,dr:0,cr:0,pl:0,last:""};
+    out.push([p.name, p.memo||"", u.n, u.dr, u.cr, u.pl, u.last]);
+  });
   return out;
 }
 function rowsPartners(){
@@ -1702,6 +1852,7 @@ function viewExport(){
         {name:"집계표", rows:rowsPivot()},
         {name:"BS", rows:rowsBS()},
         {name:"PL", rows:rowsPL()},
+        {name:"프로젝트", rows:rowsProjects()},
         {name:"거래처", rows:rowsPartners()},
         {name:"계정과목", rows:rowsAccounts()}
       ]);
@@ -1713,6 +1864,9 @@ function viewExport(){
   grid.appendChild(xcard("더존 일반전표 CSV",
     "계정과목코드를 앞 3자리(더존 표준코드)로 바꾸고, 구분을 3(차변)·4(대변)로 내보냅니다. 세무사에게 그대로 넘기실 수 있습니다.",
     "csv 내려받기", function(){ saveFile("더존_일반전표_"+tag()+".csv", csvOf(rowsDouzone())); }));
+  grid.appendChild(xcard("프로젝트 CSV",
+    "프로젝트별 줄 수와 차변·대변·손익입니다.",
+    "csv 내려받기", function(){ saveFile("프로젝트_"+tag()+".csv", csvOf(rowsProjects())); }));
   grid.appendChild(xcard("거래처 CSV",
     "등록된 거래처와 사업자번호, 사용 횟수입니다. 세무사에게 거래처 목록을 넘기실 때 쓰세요.",
     "csv 내려받기", function(){ saveFile("거래처_"+tag()+".csv", csvOf(rowsPartners())); }));
@@ -1769,6 +1923,7 @@ function applySeed(seed){
   S.accounts = (Array.isArray(seed.accounts) && seed.accounts.length)
     ? seed.accounts.slice() : DEFAULT_ACCOUNTS.slice();
   S.partners = Array.isArray(seed.partners) ? seed.partners.slice() : [];
+  S.projects = Array.isArray(seed.projects) ? seed.projects.slice() : [];
   S.vouchers = Array.isArray(seed.vouchers) ? seed.vouchers.slice() : [];
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
@@ -1780,7 +1935,7 @@ function saveAll(){
   try{
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
-      partners:S.partners, vouchers:S.vouchers, seedStamp:S.seedStamp||"",
+      partners:S.partners, projects:S.projects, vouchers:S.vouchers, seedStamp:S.seedStamp||"",
       savedAt:new Date().toISOString()
     }));
     S.dbState="이 브라우저에 저장됨";
@@ -1796,7 +1951,7 @@ function loadAll(){
 
   if(!raw){
     if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.firstRun=true;
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[]; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
   }
@@ -1805,11 +1960,12 @@ function loadAll(){
     if(d.company) S.co=Object.assign(S.co, d.company);
     S.accounts=(Array.isArray(d.accounts)&&d.accounts.length)?d.accounts.slice():DEFAULT_ACCOUNTS.slice();
     S.partners=Array.isArray(d.partners)?d.partners.slice():[];
+    S.projects=Array.isArray(d.projects)?d.projects.slice():[];
     S.vouchers=Array.isArray(d.vouchers)?d.vouchers.slice():[];
     S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[];
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[];
     S.dbState="저장된 자료를 읽지 못했습니다";
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
@@ -1835,6 +1991,10 @@ function keepMine(){
   toast("지금 장부를 그대로 씁니다");
   render();
 }
+function persistProjects(){
+  S.projects.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
+  saveAll();
+}
 function persistPartners(){
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
   saveAll();
@@ -1849,7 +2009,8 @@ function persistVoucher(id, doc){
 function backupJson(){
   return JSON.stringify({
     app:"gongan-ledger", version:1, exportedAt:new Date().toISOString(),
-    company:S.co, accounts:S.accounts, partners:S.partners, vouchers:S.vouchers
+    company:S.co, accounts:S.accounts, partners:S.partners, projects:S.projects,
+    vouchers:S.vouchers
   }, null, 1);
 }
 function restoreJson(text){
@@ -1864,6 +2025,8 @@ function restoreJson(text){
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   var ph={}; S.partners.forEach(function(p){ ph[p.name]=1; });
   (d.partners||[]).forEach(function(p){ if(p && p.name && !ph[p.name]) S.partners.push(p); });
+  var jh={}; S.projects.forEach(function(p){ jh[p.name]=1; });
+  (d.projects||[]).forEach(function(p){ if(p && p.name && !jh[p.name]) S.projects.push(p); });
   var here={}; S.vouchers.forEach(function(v){ here[v.id]=1; });
   var added=0;
   d.vouchers.forEach(function(v){ if(v && v.id && !here[v.id]){ S.vouchers.push(v); added++; } });
@@ -1886,12 +2049,13 @@ function pickBackup(){
 /* ---------- 렌더 ---------- */
 function renderView(){
   var v=$("#view"); v.innerHTML="";
-  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", partners:"거래처", accounts:"계정과목", export:"내보내기"};
+  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
   var subs={
     entry:"대차가 맞을 때만 저장됩니다 · 저장 후에는 역분개로만 바로잡습니다",
     ledger:"저장된 전표는 지워지지 않습니다 · 잘못된 건 역분개로 취소합니다",
     pivot:"계정별 차변·대변 합계와 잔액입니다",
     fs:"집계표에서 자동으로 만들어집니다",
+    projects:"전표 줄마다 프로젝트를 달면 여기서 프로젝트별로 얼마인지 보입니다",
     partners:"등록해 두면 전표에서 이름만 골라도 사업자번호가 따라옵니다",
     accounts:"코드 앞 3자리가 더존 표준코드입니다",
     export:"엑셀·CSV·더존 형식으로 받으실 수 있습니다"
@@ -1928,6 +2092,7 @@ function renderView(){
   else if(S.view==="ledger") node=viewLedger();
   else if(S.view==="pivot") node=viewPivot();
   else if(S.view==="fs") node=viewFS();
+  else if(S.view==="projects") node=viewProjects();
   else if(S.view==="partners") node=viewPartners();
   else if(S.view==="accounts") node=viewAccounts();
   else node=viewExport();
