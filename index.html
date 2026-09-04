@@ -435,7 +435,7 @@ var VIEWS = [
 var S = {
   co:{name:"㈜공간네트웍스", fyLabel:"제1기", fyStart:"2026-06-23"},
   accounts:[], vouchers:[], partners:[], period:"all", view:"entry",
-  db:null, dbState:"연결 중", draft:null, editId:null
+  db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null
 };
 
 /* ---------- 유틸 ---------- */
@@ -1684,11 +1684,30 @@ function viewExport(){
 
 /* ---------- 저장소 · 이 브라우저 ---------- */
 var LSKEY = "gongan-ledger-v1";
+function embeddedSeed(){
+  try{
+    var n = document.getElementById("embedded-data");
+    return n ? JSON.parse(n.textContent) : null;
+  }catch(e){ return null; }
+}
+function applySeed(seed){
+  if(seed.company) S.co = Object.assign(S.co, seed.company);
+  S.accounts = (Array.isArray(seed.accounts) && seed.accounts.length)
+    ? seed.accounts.slice() : DEFAULT_ACCOUNTS.slice();
+  S.partners = Array.isArray(seed.partners) ? seed.partners.slice() : [];
+  S.vouchers = Array.isArray(seed.vouchers) ? seed.vouchers.slice() : [];
+  S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
+  S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
+  S.seedStamp = seed.exportedAt || "";
+  S.firstRun = false;
+  S.dbState = "이 브라우저에 저장됨";
+}
 function saveAll(){
   try{
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
-      partners:S.partners, vouchers:S.vouchers, savedAt:new Date().toISOString()
+      partners:S.partners, vouchers:S.vouchers, seedStamp:S.seedStamp||"",
+      savedAt:new Date().toISOString()
     }));
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
@@ -1698,20 +1717,11 @@ function saveAll(){
   renderStatus();
 }
 function loadAll(){
-  var raw=null;
+  var raw=null, seed=embeddedSeed();
   try{ raw=localStorage.getItem(LSKEY); }catch(e){ raw=null; }
+
   if(!raw){
-    var seed=null;
-    try{ var node=document.getElementById("embedded-data"); if(node) seed=JSON.parse(node.textContent); }catch(x){ seed=null; }
-    if(seed && Array.isArray(seed.vouchers)){
-      if(seed.company) S.co=Object.assign(S.co, seed.company);
-      S.accounts=(Array.isArray(seed.accounts)&&seed.accounts.length)?seed.accounts.slice():DEFAULT_ACCOUNTS.slice();
-      S.partners=Array.isArray(seed.partners)?seed.partners.slice():[];
-      S.vouchers=seed.vouchers.slice();
-      S.firstRun=false; S.dbState="이 브라우저에 저장됨";
-      S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
-      saveAll(); return;
-    }
+    if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
     S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
@@ -1722,6 +1732,7 @@ function loadAll(){
     S.accounts=(Array.isArray(d.accounts)&&d.accounts.length)?d.accounts.slice():DEFAULT_ACCOUNTS.slice();
     S.partners=Array.isArray(d.partners)?d.partners.slice():[];
     S.vouchers=Array.isArray(d.vouchers)?d.vouchers.slice():[];
+    S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
     S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[];
@@ -1729,6 +1740,26 @@ function loadAll(){
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
+
+  /* 이 파일에 더 새로운 자료가 들어 있는지 */
+  if(seed && seed.exportedAt && Array.isArray(seed.vouchers) && seed.exportedAt !== S.seedStamp){
+    S.seedUpdate = { stamp:seed.exportedAt, n:seed.vouchers.length, cur:S.vouchers.length, data:seed };
+  }
+}
+function takeSeedUpdate(){
+  var u=S.seedUpdate; if(!u) return;
+  var msg = "이 파일에 더 새로운 자료가 들어 있습니다." + "\n\n" + "지금 장부: 전표 " + u.cur + "장" + "\n" + "파일 자료: 전표 " + u.n + "장" + "\n\n" + "바꾸기 전에 지금 장부를 백업 파일로 먼저 받아 두겠습니다. 진행할까요?";
+  if(!confirm(msg)) return;
+  try{ saveFile("장부백업_바꾸기전_"+new Date().toISOString().slice(0,10)+".json", backupJson()); }catch(e){}
+  applySeed(u.data); S.seedUpdate=null; saveAll();
+  toast("파일에 든 자료로 바꿨습니다 · 전표 "+S.vouchers.length+"장");
+  render();
+}
+function keepMine(){
+  var u=S.seedUpdate; if(!u) return;
+  S.seedStamp=u.stamp; S.seedUpdate=null; saveAll();
+  toast("지금 장부를 그대로 씁니다");
+  render();
 }
 function persistPartners(){
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
@@ -1803,6 +1834,20 @@ function renderView(){
   if(S.vouchers.length){
     acts.appendChild(el("span",{class:"tag "+(Math.abs(g.diff)<0.5?"g":"c"),
       text: Math.abs(g.diff)<0.5 ? "전체 대차 일치" : "전체 차액 "+fmt0(g.diff)}));
+  }
+  if(S.seedUpdate){
+    var sb=el("div",{class:"banner w"});
+    sb.innerHTML = svg("M10 6.5v4.2M10 13.6h.01",17)
+      + "<span><b>이 파일에 더 새로운 자료가 들어 있습니다.</b> "
+      + "지금 장부는 전표 " + S.seedUpdate.cur + "장, 파일 자료는 " + S.seedUpdate.n + "장입니다. "
+      + "바꾸시면 지금 장부는 먼저 백업 파일로 받아 둡니다.</span>";
+    var wrapb=el("span",{style:"margin-left:auto;display:flex;gap:7px;flex:none;"});
+    var b1=el("button",{class:"btn sm pri", text:"파일 자료로 바꾸기"});
+    b1.addEventListener("click", takeSeedUpdate);
+    var b2=el("button",{class:"btn sm", text:"그대로 두기"});
+    b2.addEventListener("click", keepMine);
+    wrapb.appendChild(b1); wrapb.appendChild(b2); sb.appendChild(wrapb);
+    v.appendChild(sb);
   }
   var node;
   if(S.view==="entry") node=viewEntry();
