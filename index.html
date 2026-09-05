@@ -118,6 +118,28 @@ input[type=number]{-moz-appearance:textfield;}
 .seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden;}
 .seg button{height:30px;padding:0 11px;border:0;background:var(--surface);font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer;}
 .seg button+button{border-left:1px solid var(--rule);}
+.lnk{background:none;border:0;padding:0;margin:0;font:inherit;color:var(--accent-deep);
+  cursor:pointer;text-align:left;text-decoration:underline;text-underline-offset:2.5px;
+  text-decoration-color:var(--rule);}
+.lnk:hover{text-decoration-color:var(--accent);}
+.rcsum{display:flex;flex-wrap:wrap;gap:0;border-top:1px solid var(--rule-soft);}
+.rcsum div{flex:1 1 150px;padding:11px 15px;border-right:1px solid var(--rule-soft);}
+.rcsum div:last-child{border-right:0;}
+.rcsum dt{font-size:11.5px;color:var(--ink-3);margin:0 0 3px;}
+.rcsum dd{margin:0;font-family:var(--f-m);font-size:16px;font-weight:600;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum" 1;}
+.rcsum dd.neg{color:var(--cr);}
+.rcsum dd.ok{color:var(--accent-deep);}
+.scrollbox{max-height:420px;overflow-y:auto;}
+.ch .lb2{font-size:11.5px;color:var(--ink-3);font-weight:500;}
+select.mini{height:28px;padding:0 8px;border:1px solid var(--rule);border-radius:7px;
+  background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:600;}
+.rcgrid{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding:13px 15px;}
+.rcgrid .f{display:flex;flex-direction:column;gap:5px;}
+.rcgrid .f label{font-size:11.5px;color:var(--ink-3);font-weight:500;}
+.rcgrid input,.rcgrid select{height:34px;padding:0 10px;border:1px solid var(--rule);
+  border-radius:var(--r-in);background:var(--surface);color:var(--ink);font:inherit;font-size:13.5px;}
+.rcgrid input.num{font-family:var(--f-m);text-align:right;font-variant-numeric:tabular-nums;width:170px;}
 .ldbar{display:flex;align-items:center;gap:9px;margin-bottom:13px;flex-wrap:wrap;}
 .ldbar .sp{flex:1;}
 .ldbar .cntx{font-size:12.5px;color:var(--ink-3);font-family:var(--f-m);white-space:nowrap;}
@@ -439,6 +461,7 @@ var VIEWS = [
   {k:"ledger",   t:"전표장",    ic:"M6 5.5h11M6 10h11M6 14.5h11M3 5.5h.01M3 10h.01M3 14.5h.01"},
   {k:"pivot",    t:"집계표",    ic:"M3 16.4h14M5.6 16.4V9.6M10 16.4V4.4M14.4 16.4v-4.6"},
   {k:"fs",       t:"재무제표",  ic:"M5 3h10v14H5zM8 7h4M8 10h4M8 13h2"},
+  {k:"recon",    t:"은행대사",  ic:"M3.5 7.5h13v8a1 1 0 01-1 1h-11a1 1 0 01-1-1zM3.5 7.5L10 3.5l6.5 4M7 12.2l2 2 4-4.2"},
   {k:"projects", t:"프로젝트",  ic:"M3.5 6.5h5l1.6 2h10.4v9a1.6 1.6 0 01-1.6 1.6H5.1A1.6 1.6 0 013.5 17.5z"},
   {k:"partners", t:"거래처",    ic:"M7 9.2a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2zM2.6 16.4c0-2.6 2-4.2 4.4-4.2s4.4 1.6 4.4 4.2M13.4 8.6a2.2 2.2 0 100-4.4M14.2 12.4c2 .3 3.2 1.8 3.2 4"},
   {k:"accounts", t:"계정과목",  ic:"M4 6h12M4 10h12M4 14h7"},
@@ -449,7 +472,9 @@ var VIEWS = [
 var S = {
   co:{name:"㈜공간네트웍스", fyLabel:"제1기", fyStart:"2026-06-23"},
   accounts:[], vouchers:[], partners:[], projects:[], period:"all", view:"entry",
-  db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:""
+  db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
+  lastType:"은행거래", ldHist:false, ldFocus:"",
+  acct:"", recon:{}, rcAcct:"", rcDate:"", bsAsOf:"", bsCmp:""
 };
 
 /* ---------- 유틸 ---------- */
@@ -595,6 +620,16 @@ function netIncome(m){
        + sumRange(m,9000000,9309999) - sumRange(m,9310000,9999999);
 }
 
+/* 고치던 전표를 두고 나갈 때 — 덮어쓰기 사고를 막는다 */
+function leaveEdit(next){
+  if(!S.editId || next==="entry") return true;
+  var msg = "고치던 전표가 있습니다." + "\n\n"
+    + "지금 나가면 고친 내용은 저장되지 않고 수정이 취소됩니다." + "\n"
+    + "나가시겠습니까?";
+  if(!confirm(msg)) return false;
+  S.editId=null; S.draft=newDraft();
+  return true;
+}
 /* ---------- 렌더: 셸 ---------- */
 function renderNav(){
   var nav=$("#nav"); nav.innerHTML="";
@@ -605,7 +640,10 @@ function renderNav(){
     if(v.k==="partners") ct=String(S.partners.length);
     if(v.k==="projects") ct=String(S.projects.length);
     var b=el("button",{class:(S.view===v.k?"on":""), html:svg(v.ic)+"<span>"+v.t+"</span>"+(ct?'<span class="ct">'+ct+"</span>":"")});
-    b.addEventListener("click", function(){ S.view=v.k; render(); });
+    b.addEventListener("click", function(){
+      if(!leaveEdit(v.k)) return;
+      S.view=v.k; render();
+    });
     nav.appendChild(b);
   });
 }
@@ -634,12 +672,15 @@ function globalBalance(){
 /* ---------- 전표 입력 ---------- */
 function blankLine(){ return {code:"", project:"", partner:"", bizno:"", memo:"", dr:"", cr:""}; }
 function newDraft(){
-  return {date:todayISO(), type:"은행거래", memo:"", lines:[blankLine(), blankLine()]};
+  return {date:todayISO(), type:S.lastType||"은행거래", memo:"", lines:[blankLine(), blankLine()]};
 }
 function draftTotals(){
-  var d=S.draft, dr=0, cr=0;
-  (d.lines||[]).forEach(function(l){ dr+=(+l.dr||0); cr+=(+l.cr||0); });
-  return {dr:dr, cr:cr, diff:dr-cr};
+  var d=S.draft, dr=0, cr=0, ab=0;
+  (d.lines||[]).forEach(function(l){
+    dr+=(+l.dr||0); cr+=(+l.cr||0);
+    ab+=Math.abs(+l.dr||0)+Math.abs(+l.cr||0);
+  });
+  return {dr:dr, cr:cr, diff:dr-cr, abs:ab};
 }
 function accountSelect(val, onch){
   var s=el("select",{}); s.appendChild(el("option",{value:"", text:"계정 선택"}));
@@ -657,6 +698,26 @@ function accountSelect(val, onch){
 function viewEntry(){
   if(!S.draft) S.draft = newDraft();
   var d=S.draft, wrap=el("div");
+
+  /* 무슨 전표를 고치는 중인지 */
+  if(S.editId){
+    var orig=null;
+    S.vouchers.forEach(function(v){ if(v.id===S.editId) orig=v; });
+    if(orig){
+      var eb=el("div",{class:"banner c"});
+      eb.innerHTML = svg("M4 13.4V16h2.6l7.4-7.4-2.6-2.6L4 13.4zM13.4 4.4l2.2 2.2",17)
+        + "<span><b>전표를 고치는 중입니다 — 새 전표가 아닙니다.</b> "
+        + esc(orig.date) + " · " + esc(orig.memo||"(적요 없음)") + " · "
+        + fmt0(voucherAmount(orig)) + "원"
+        + (orig.editCount ? " · 지금까지 " + orig.editCount + "회 고침" : "")
+        + "<br>저장하면 이 전표를 덮어쓰고 다시 잠급니다. 무엇을 왜 고쳤는지 물어보고 전표에 남깁니다.</span>";
+      var eCan=el("button",{class:"btn sm", text:"수정 취소"});
+      eCan.addEventListener("click", function(){ S.editId=null; S.draft=newDraft(); renderView(); });
+      var eSp=el("span",{style:"margin-left:auto;flex:none;"});
+      eSp.appendChild(eCan); eb.appendChild(eSp);
+      wrap.appendChild(eb);
+    }
+  }
 
   var dl=el("datalist",{id:"partnerNames"});
   S.partners.forEach(function(p){
@@ -782,7 +843,7 @@ function viewEntry(){
   tb.appendChild(body); tw.appendChild(tb); head.appendChild(tw);
 
   /* 합계 */
-  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.dr>0;
+  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.abs>0.5;
   var bar=el("div",{class:"sumbar"});
   var addBtn=el("button",{class:"btn sm", html:svg("M10 5v10M5 10h10",13)+"<span>줄 추가</span>"});
   addBtn.addEventListener("click", function(){ d.lines.push(blankLine()); renderView(); });
@@ -814,12 +875,15 @@ function viewEntry(){
   wrap.appendChild(head);
 
   /* 최근 전표 */
-  var recent=S.vouchers.slice().sort(function(a,b){ return (b.date||"").localeCompare(a.date||"")||(b.id||"").localeCompare(a.id||""); }).slice(0,6);
+  var recent=S.vouchers.slice().sort(function(a,b){ return (b.date||"").localeCompare(a.date||"")||(b.id||"").localeCompare(a.id||""); }).slice(0,20);
   if(recent.length){
     var rc=el("div",{class:"card"});
-    rc.appendChild(el("div",{class:"ch"},[el("span",{text:"최근 저장한 전표"})]));
-    var rt=el("div",{class:"tw"}), rtab=el("table");
-    rtab.innerHTML='<thead><tr><th style="width:100px">작성일</th><th style="width:92px">유형</th><th>적요</th><th class="n" style="width:130px">금액</th><th style="width:70px"></th></tr></thead>';
+    rc.appendChild(el("div",{class:"ch"},[
+      el("span",{text:"최근 저장한 전표"}),
+      el("span",{class:"tag b", text:"전체 "+S.vouchers.length+"장 중 최근 "+recent.length+"장"})
+    ]));
+    var rt=el("div",{class:"tw scrollbox"}), rtab=el("table");
+    rtab.innerHTML='<thead><tr><th style="width:100px">작성일</th><th style="width:92px">유형</th><th>적요</th><th class="n" style="width:130px">금액</th><th style="width:118px"></th></tr></thead>';
     var rb=el("tbody");
     recent.forEach(function(v){
       var amt=(v.lines||[]).reduce(function(s,l){ return s+(+l.dr||0); },0);
@@ -831,7 +895,13 @@ function viewEntry(){
       var ta=el("td");
       var eb=el("button",{class:"btn sm", text:"복사"});
       eb.addEventListener("click", function(){ copyToDraft(v); });
-      ta.appendChild(eb); tr.appendChild(ta);
+      var vb=el("button",{class:"btn sm", text:"보기"});
+      vb.addEventListener("click", function(){
+        if(!leaveEdit("ledger")) return;
+        S.ldHist=false; S.ldFocus=v.id; S.ldType="all"; S.ldQ=""; S.period="all";
+        S.view="ledger"; render();
+      });
+      ta.appendChild(eb); ta.appendChild(vb); tr.appendChild(ta);
       rb.appendChild(tr);
     });
     rtab.appendChild(rb); rt.appendChild(rtab); rc.appendChild(rt);
@@ -840,7 +910,7 @@ function viewEntry(){
   return wrap;
 }
 function updateSums(){
-  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.dr>0;
+  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.abs>0.5;
   var a=$("#sumDr"), b=$("#sumCr"), c=$("#sumDiff"), s=$("#saveBtn");
   if(a) a.textContent=fmt0(t.dr);
   if(b) b.textContent=fmt0(t.cr);
@@ -853,19 +923,33 @@ function reversedIds(){
   return m;
 }
 function voucherAmount(v){
-  return (v.lines||[]).reduce(function(t,l){ return t+(+l.dr||0); },0);
+  var t=0;
+  (v.lines||[]).forEach(function(l){ t+=Math.abs((+l.dr||0)-(+l.cr||0)); });
+  return t/2;
+}
+/* 손익 계정인가 — 매출·매출원가·판매관리비·영업외 */
+function isPL(code){
+  var c=parseInt(code,10);
+  return (c>=4000000 && c<=4999999) || (c>=8000000 && c<=9999999);
 }
 function reverseVoucher(v){
-  var msg = "이 전표를 취소하는 역분개 전표를 만듭니다." + '\\n\\n' 
-    + v.date + " · " + (v.memo||"(적요 없음)") + '\\n'
-    + fmt0(voucherAmount(v)) + "원" + '\\n\\n'
-    + "원래 전표는 그대로 남고, 차변과 대변을 뒤집은 새 전표가 하나 더 생깁니다.";
+  var hasPL = (v.lines||[]).some(function(l){ return isPL(l.code); });
+  var msg = "이 전표를 취소하는 역분개 전표를 만듭니다." + '\n\n' 
+    + v.date + " · " + (v.memo||"(적요 없음)") + '\n'
+    + fmt0(voucherAmount(v)) + "원" + '\n\n'
+    + "원래 전표는 그대로 남고, 취소 전표가 하나 더 생깁니다." + "\n"
+    + "자산·부채·자본 계정은 차변과 대변을 뒤집습니다." + "\n"
+    + "손익 계정은 차대를 바꾸지 않고 같은 변에 마이너스로 넣습니다."
+    + (hasPL ? ("\n\n" + "이 전표에는 손익 계정이 있어 마이너스로 들어갑니다.") : "");
   if(!confirm(msg)) return;
   var today = todayISO();
   var lines = (v.lines||[]).map(function(l){
+    var dr=(+l.dr||0), cr=(+l.cr||0), nd, nc;
+    if(isPL(l.code)){ nd = dr ? -dr : 0; nc = cr ? -cr : 0; }
+    else { nd = cr; nc = dr; }
     return {code:l.code, name:l.name||accName(l.code), project:l.project||"",
             partner:l.partner||"", bizno:l.bizno||"",
-            memo:"취소: " + (l.memo||v.memo||""), dr:(+l.cr||0), cr:(+l.dr||0)};
+            memo:"취소: " + (l.memo||v.memo||""), dr:nd, cr:nc};
   });
   var id = today.replace(/-/g,"") + "-" + Math.random().toString(36).slice(2,8);
   persistVoucher(id, {date:today, type:v.type||"대체거래",
@@ -875,10 +959,10 @@ function reverseVoucher(v){
   render();
 }
 function unlockVoucher(v){
-  var msg = "이 전표의 잠금을 풉니다." + '\\n\\n'
-    + v.date + " · " + (v.memo||"(적요 없음)") + '\\n'
-    + fmt0(voucherAmount(v)) + "원" + '\\n\\n'
-    + "잠금을 풀면 내용을 고칠 수 있습니다. 고친 흔적은 전표에 남습니다." + '\\n'
+  var msg = "이 전표의 잠금을 풉니다." + '\n\n'
+    + v.date + " · " + (v.memo||"(적요 없음)") + '\n'
+    + fmt0(voucherAmount(v)) + "원" + '\n\n'
+    + "잠금을 풀면 내용을 고칠 수 있습니다. 고친 흔적은 전표에 남습니다." + '\n'
     + "단순 오타가 아니라 거래 자체가 잘못된 것이라면, 고치지 말고 「역분개」를 쓰세요.";
   if(!confirm(msg)) return;
   var doc = Object.assign({}, v);
@@ -922,7 +1006,8 @@ function copyToDraft(v){
 }
 function saveDraft(){
   var d=S.draft, t=draftTotals();
-  if(Math.abs(t.diff)>=0.5 || t.dr<=0){ toast("차변과 대변이 맞아야 저장됩니다"); return; }
+  if(Math.abs(t.diff)>=0.5){ toast("차변과 대변이 맞아야 저장됩니다"); return; }
+  if(t.abs<0.5){ toast("금액이 들어간 줄이 없습니다"); return; }
   var lines=d.lines.filter(function(l){ return l.code && ((+l.dr||0)!==0 || (+l.cr||0)!==0); })
     .map(function(l){
       return {code:l.code, name:accName(l.code), project:(l.project||"").trim(),
@@ -969,6 +1054,7 @@ function saveDraft(){
   }
   persistVoucher(id, doc);
   var wasEdit=!!S.editId;
+  S.lastType=d.type||S.lastType;
   S.editId=null; S.draft=newDraft();
   toast(wasEdit ? "고쳐서 저장하고 다시 잠갔습니다" : "전표를 저장했습니다");
   render();
@@ -982,9 +1068,114 @@ function voucherText(v){
   });
   return t.join(" ").toLowerCase();
 }
+function srchBox(ph){
+  var sw=el("span",{class:"srch"});
+  sw.innerHTML = svg("M9 14.4a5.4 5.4 0 100-10.8 5.4 5.4 0 000 10.8zM13.4 13.4L17 17",15);
+  var si=el("input",{type:"text", value:S.ldQ||"", placeholder:ph});
+  si.addEventListener("input", function(){
+    S.ldQ=si.value;
+    clearTimeout(si._t);
+    si._t=setTimeout(function(){
+      var pos=si.selectionStart; renderView();
+      var n=document.querySelector(".srch input");
+      if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
+    }, 220);
+  });
+  sw.appendChild(si);
+  return sw;
+}
+/* 손댄 흔적이 있는 전표들 — 전표장에서 빼고 여기서 찾는다 */
+function historyList(){
+  var rev=reversedIds();
+  return S.vouchers.filter(function(v){
+    return v.editCount || v.reverses || rev[v.id] || v.unlocked;
+  }).sort(function(a,b){
+    var ka=String(a.lastEditedAt||a.updatedAt||a.date||"");
+    var kb=String(b.lastEditedAt||b.updatedAt||b.date||"");
+    return kb.localeCompare(ka);
+  });
+}
+function historyCard(){
+  var rev=reversedIds();
+  var q=String(S.ldQ||"").trim().toLowerCase();
+  var all=historyList();
+  var list=all.filter(function(v){
+    if(!q) return true;
+    return (voucherText(v)+" "+(v.editNote||"")).toLowerCase().indexOf(q)>=0;
+  });
+  var wrap=el("div");
+  var bar=el("div",{class:"ldbar"});
+  bar.appendChild(srchBox("적요·사유·거래처로 찾기"));
+  if(q){
+    var cb=el("button",{class:"btn sm", text:"검색 지우기"});
+    cb.addEventListener("click", function(){ S.ldQ=""; renderView(); });
+    bar.appendChild(cb);
+  }
+  bar.appendChild(el("span",{class:"sp"}));
+  bar.appendChild(el("span",{class:"cntx", text: q ? (all.length+"건 중 "+list.length+"건") : (all.length+"건")}));
+  wrap.appendChild(bar);
+  var card=el("div",{class:"card"});
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"수정 이력"}),
+    el("span",{class:"tag b", text:"전표장에는 고쳐진 뒤의 내용만 보입니다"})
+  ]));
+  if(!list.length){
+    card.appendChild(el("div",{class:"empty", html: all.length
+      ? "<b>찾는 내용이 없습니다</b>검색어를 지워 보세요."
+      : "<b>손댄 전표가 아직 없습니다</b>전표를 고치거나 역분개하면 여기에 남습니다."}));
+    wrap.appendChild(card); return wrap;
+  }
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:118px">구분</th><th style="width:96px">작성일</th>'
+    +'<th>적요</th><th class="n" style="width:118px">금액</th>'
+    +'<th style="width:150px">마지막 손댄 날</th><th>사유</th><th style="width:104px"></th></tr></thead>';
+  var tb=el("tbody");
+  list.forEach(function(v){
+    var tr=el("tr");
+    var tdK=el("td");
+    if(v.editCount) tdK.appendChild(el("span",{class:"tag w", text:v.editCount+"회 수정"}));
+    if(v.reverses) tdK.appendChild(el("span",{class:"tag c", text:"역분개"}));
+    if(rev[v.id]) tdK.appendChild(el("span",{class:"tag w", text:"취소됨"}));
+    if(v.unlocked) tdK.appendChild(el("span",{class:"tag c", text:"잠금 풀림"}));
+    tr.appendChild(tdK);
+    tr.appendChild(el("td",{class:"c", text:v.date||""}));
+    tr.appendChild(el("td",{class:"mut", text:v.memo||"(적요 없음)"}));
+    tr.appendChild(el("td",{class:"n", text:fmt0(voucherAmount(v))}));
+    tr.appendChild(el("td",{class:"c", text:String(v.lastEditedAt||v.unlockedAt||v.updatedAt||"").slice(0,10)||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:v.editNote||"—"}));
+    var tdA=el("td");
+    var b=el("button",{class:"btn sm", text:"전표 보기"});
+    b.addEventListener("click", function(){
+      S.ldHist=false; S.ldFocus=v.id; S.ldType="all"; S.ldQ=""; S.period="all"; render();
+    });
+    tdA.appendChild(b); tr.appendChild(tdA);
+    tb.appendChild(tr);
+  });
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  card.appendChild(el("div",{class:"note", text:
+    "전표장에는 고쳐진 뒤의 내용만 보입니다. 무엇을 언제 왜 고쳤는지는 지우지 않고 여기에 남겨 둡니다. 「전표 보기」를 누르면 그 전표만 전표장에서 펼쳐 봅니다."}));
+  wrap.appendChild(card);
+  return wrap;
+}
 function viewLedger(){
   var wrap=el("div");
-  var base=periodVouchers().slice().sort(function(a,b){
+
+  /* 전표장 / 수정이력 */
+  var tabs=el("div",{class:"ldbar"});
+  var tseg=el("span",{class:"seg"});
+  [["book","전표장"],["hist","수정이력"]].forEach(function(p){
+    var isH=(p[0]==="hist");
+    var b=el("button",{class:(isH===!!S.ldHist?"on":"")});
+    b.appendChild(el("span",{text:p[1]}));
+    b.appendChild(el("span",{class:"c", text:String(isH?historyList().length:S.vouchers.length)}));
+    b.addEventListener("click", function(){ S.ldHist=isH; S.ldFocus=""; S.ldQ=""; renderView(); });
+    tseg.appendChild(b);
+  });
+  tabs.appendChild(tseg);
+  wrap.appendChild(tabs);
+  if(S.ldHist){ wrap.appendChild(historyCard()); return wrap; }
+
+  var base=(S.ldFocus ? S.vouchers.slice() : periodVouchers().slice()).sort(function(a,b){
     return (a.date||"").localeCompare(b.date||"") || (a.id||"").localeCompare(b.id||"");
   });
 
@@ -995,10 +1186,19 @@ function viewLedger(){
 
   var q=String(S.ldQ||"").trim().toLowerCase();
   var list=base.filter(function(v){
+    if(S.ldFocus) return v.id===S.ldFocus;
     if(S.ldType!=="all" && v.type!==S.ldType) return false;
     if(q && voucherText(v).indexOf(q)<0) return false;
     return true;
   });
+  if(S.ldFocus){
+    var fb=el("div",{class:"ldbar"});
+    fb.appendChild(el("span",{class:"tag c", text:"전표 한 장만 보는 중"}));
+    var fx=el("button",{class:"btn sm", text:"전표장 전체 보기"});
+    fx.addEventListener("click", function(){ S.ldFocus=""; renderView(); });
+    fb.appendChild(fx);
+    wrap.appendChild(fb);
+  }
 
   /* 필터 바 */
   var bar=el("div",{class:"ldbar"});
@@ -1013,20 +1213,7 @@ function viewLedger(){
   });
   bar.appendChild(seg);
 
-  var sw=el("span",{class:"srch"});
-  sw.innerHTML = svg("M9 14.4a5.4 5.4 0 100-10.8 5.4 5.4 0 000 10.8zM13.4 13.4L17 17",15);
-  var si=el("input",{type:"text", value:S.ldQ||"", placeholder:"적요·거래처·계정으로 찾기"});
-  si.addEventListener("input", function(){
-    S.ldQ=si.value;
-    clearTimeout(si._t);
-    si._t=setTimeout(function(){
-      var pos=si.selectionStart; renderView();
-      var n=document.querySelector(".srch input");
-      if(n){ n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){} }
-    }, 220);
-  });
-  sw.appendChild(si);
-  bar.appendChild(sw);
+  bar.appendChild(srchBox("적요·거래처·계정으로 찾기"));
 
   if(S.ldType!=="all" || q){
     var clr=el("button",{class:"btn sm", text:"필터 해제"});
@@ -1064,7 +1251,7 @@ function viewLedger(){
     +'<th class="n" style="width:118px">차변</th><th class="n" style="width:118px">대변</th><th style="width:112px"></th></tr></thead>';
   var tb=el("tbody");
   list.forEach(function(v){
-    var vd=0; (v.lines||[]).forEach(function(l){ vd+=(+l.dr||0); });
+    var vd=voucherAmount(v);
     var gtr=el("tr",{class:"grp"});
     var gtd=el("td",{colspan:"9", style:"background:var(--surface-3);padding:7px 12px;border-top:1px solid var(--rule-soft);"});
     var box=el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;"});
@@ -1074,9 +1261,6 @@ function viewLedger(){
     box.appendChild(el("span",{class:"m", style:"color:var(--ink-3);font-size:11.5px;", text:fmt0(vd)+"원"}));
     if(v.reverses) box.appendChild(el("span",{class:"tag c", text:"역분개"}));
     if(rev[v.id]) box.appendChild(el("span",{class:"tag w", text:"취소됨"}));
-    if(v.editCount) box.appendChild(el("span",{class:"tag w",
-      text:v.editCount+"회 수정 · "+String(v.lastEditedAt||"").slice(0,10)
-           +(v.editNote?" · "+v.editNote:"")}));
     if(v.unlocked) box.appendChild(el("span",{class:"tag c", text:"잠금 풀림"}));
 
     var sp=el("span",{style:"margin-left:auto;display:flex;gap:6px;"});
@@ -1130,13 +1314,100 @@ function viewLedger(){
     + "<span>"+(ok?("차변 합계와 대변 합계가 같습니다"+((S.ldType==="all"&&!q)?"":" (고른 전표 기준)"))
                  :"대차가 "+fmt0(Math.abs(diff))+"원 맞지 않습니다")+"</span>"}));
   card.appendChild(el("div",{class:"note", text:
-    "저장한 전표는 잠깁니다. 오타처럼 사소한 것은 「잠금 해제」 후 고치시면 되고, 고친 횟수와 날짜가 전표에 남습니다. 거래 자체가 잘못됐다면 고치지 말고 「역분개」로 취소 전표를 만드세요 — 원래 기록이 남아야 세무사가 흐름을 따라올 수 있습니다. 전표를 지우는 기능은 없습니다."}));
+    "여기에는 고쳐진 뒤의 내용만 보입니다 — 무엇을 언제 왜 고쳤는지는 위 「수정이력」에서 찾으실 수 있습니다. 저장한 전표는 잠깁니다. 오타처럼 사소한 것은 「잠금 해제」 후 고치시면 되고, 고친 흔적은 남습니다. 거래 자체가 잘못됐다면 고치지 말고 「역분개」로 취소 전표를 만드세요 — 원래 기록이 남아야 세무사가 흐름을 따라올 수 있습니다. 전표를 지우는 기능은 없습니다."}));
   wrap.appendChild(card);
   return wrap;
 }
 
 /* ---------- 집계표 ---------- */
+/* ---------- 계정원장 ---------- */
+function counterName(v, l){
+  var mine=(+l.dr||0)-(+l.cr||0);
+  var others=(v.lines||[]).filter(function(x){
+    if(x===l) return false;
+    var d=(+x.dr||0)-(+x.cr||0);
+    return d!==0 && (d>0)!==(mine>0);
+  });
+  if(!others.length) others=(v.lines||[]).filter(function(x){ return x!==l; });
+  if(!others.length) return "—";
+  if(others.length===1) return others[0].name||accName(others[0].code);
+  return "제좌";
+}
+function accountRows(code, filter){
+  var out=[];
+  S.vouchers.filter(filter).forEach(function(v){
+    (v.lines||[]).forEach(function(l, i){
+      if(String(l.code)!==String(code)) return;
+      out.push({v:v, l:l, i:i});
+    });
+  });
+  out.sort(function(a,b){
+    return (a.v.date||"").localeCompare(b.v.date||"") || (a.v.id||"").localeCompare(b.v.id||"");
+  });
+  return out;
+}
+function accountLedgerCard(code){
+  var dn=catOf(code).dn, rows=accountRows(code, upToPeriod);
+  var card=el("div",{class:"card", id:"acctCard", style:"margin-top:16px;"});
+  var tdr=0, tcr=0;
+  rows.forEach(function(r){ tdr+=(+r.l.dr||0); tcr+=(+r.l.cr||0); });
+  var bal=dn?(tdr-tcr):(tcr-tdr);
+  var rgt=el("span",{class:"r"});
+  rgt.appendChild(el("span",{class:"tag b", text:(S.period==="all"?"전체 기간":S.period+" 까지")}));
+  rgt.appendChild(el("span",{class:"tag g", text:"잔액 "+fmt0(bal)+"원"}));
+  var xb=el("button",{class:"btn sm", text:"닫기"});
+  xb.addEventListener("click", function(){ S.acct=""; renderView(); });
+  rgt.appendChild(xb);
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"계정원장 · "+accName(code)+"  ("+String(code).slice(0,3)+")"}),
+    rgt
+  ]));
+  if(!rows.length){
+    card.appendChild(el("div",{class:"empty", html:"<b>이 계정에는 거래가 없습니다</b>기간을 「전체 기간」으로 바꿔 보세요."}));
+    return card;
+  }
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:96px">작성일</th><th style="width:88px">유형</th>'
+    +'<th>적요</th><th style="width:118px">거래처</th><th style="width:132px">상대계정</th>'
+    +'<th class="n" style="width:112px">차변</th><th class="n" style="width:112px">대변</th>'
+    +'<th class="n" style="width:122px">잔액</th><th style="width:66px"></th></tr></thead>';
+  var tb=el("tbody"), run=0;
+  rows.forEach(function(r){
+    var d=(+r.l.dr||0), c=(+r.l.cr||0);
+    run += dn ? (d-c) : (c-d);
+    var tr=el("tr");
+    tr.appendChild(el("td",{class:"c", text:r.v.date||""}));
+    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:r.v.type||"—"})]));
+    tr.appendChild(el("td",{class:"mut", text:r.l.memo||r.v.memo||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:r.l.partner||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:counterName(r.v, r.l)}));
+    tr.appendChild(el("td",{class:"n dr", text:fmt(d)}));
+    tr.appendChild(el("td",{class:"n cr", text:fmt(c)}));
+    tr.appendChild(el("td",{class:"n"+(run<0?" neg":""), style:"font-weight:600;", text:fmt0(run)}));
+    var ta=el("td");
+    var vb=el("button",{class:"btn sm", text:"보기"});
+    vb.addEventListener("click", function(){
+      S.ldHist=false; S.ldFocus=r.v.id; S.ldType="all"; S.ldQ=""; S.period="all";
+      S.view="ledger"; render();
+    });
+    ta.appendChild(vb); tr.appendChild(ta);
+    tb.appendChild(tr);
+  });
+  var ftr=el("tr");
+  ftr.appendChild(el("td",{colspan:"5", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:"합계 · "+rows.length+"줄"}));
+  ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(tdr)}));
+  ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(tcr)}));
+  ftr.appendChild(el("td",{class:"n"+(bal<0?" neg":""), style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(bal)}));
+  ftr.appendChild(el("td",{style:"background:var(--surface-3);border-top:1px solid var(--rule);"}));
+  tb.appendChild(ftr);
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  card.appendChild(el("div",{class:"note", text:
+    "잔액은 줄마다 쌓아 나간 값입니다. "+(dn?"자산·비용 계정이라 차변이 늘면 잔액이 커집니다.":"부채·자본·수익 계정이라 대변이 늘면 잔액이 커집니다.")
+    +" 상대계정은 그 전표에서 반대편에 있던 계정이고, 여러 개면 「제좌」로 적습니다."}));
+  return card;
+}
 function viewPivot(){
+
   var wrap=el("div");
   var m=tally(upToPeriod), keys=Object.keys(m).sort();
   if(!keys.length){
@@ -1158,7 +1429,14 @@ function viewPivot(){
     tdr+=r.dr; tcr+=r.cr;
     var tr=el("tr");
     tr.appendChild(el("td",{class:"c", text:k.slice(0,3)}));
-    tr.appendChild(el("td",{text:accName(k)}));
+    var tdN=el("td");
+    var lnk=el("button",{class:"lnk", text:accName(k)});
+    lnk.addEventListener("click", function(){
+      S.acct = (S.acct===k) ? "" : k;
+      renderView();
+      if(S.acct){ try{ document.getElementById("acctCard").scrollIntoView({behavior:"smooth", block:"start"}); }catch(e){} }
+    });
+    tdN.appendChild(lnk); tr.appendChild(tdN);
     tr.appendChild(el("td",{},[el("span",{class:"tag b", text:c.name})]));
     tr.appendChild(el("td",{class:"n dr", text:fmt(r.dr)}));
     tr.appendChild(el("td",{class:"n cr", text:fmt(r.cr)}));
@@ -1174,14 +1452,198 @@ function viewPivot(){
   ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(tdr-tcr)}));
   tb.appendChild(ftr);
   tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
-  card.appendChild(el("div",{class:"note", text:"잔액은 자산·비용 계정이면 차변−대변, 부채·자본·수익 계정이면 대변−차변으로 계산합니다. 감가상각누계액·대손충당금처럼 차감 계정은 음수로 표시됩니다."}));
+  card.appendChild(el("div",{class:"note", text:"계정과목을 누르면 그 계정의 거래 내역과 잔액이 아래에 펼쳐집니다. 잔액은 자산·비용 계정이면 차변−대변, 부채·자본·수익 계정이면 대변−차변으로 계산합니다. 감가상각누계액·대손충당금처럼 차감 계정은 음수로 표시됩니다."}));
   wrap.appendChild(card);
+  if(S.acct) wrap.appendChild(accountLedgerCard(S.acct));
+  return wrap;
+}
+
+/* ---------- 은행 대사 ---------- */
+function cashAccounts(){
+  var list=S.accounts.filter(function(a){ var c=parseInt(a.code,10); return c>=1000000 && c<1100000; });
+  if(!list.length) list=S.accounts.filter(function(a){ var c=parseInt(a.code,10); return c>=1000000 && c<1800000; });
+  return list;
+}
+function monthEnd(m){
+  var y=parseInt(String(m).slice(0,4),10), mm=parseInt(String(m).slice(5,7),10);
+  var d=new Date(y, mm, 0).getDate();
+  return m+"-"+(d<10?"0":"")+d;
+}
+function reconOf(code){
+  if(!S.recon) S.recon={};
+  if(!S.recon[code]) S.recon[code]={cleared:{}, balances:{}};
+  if(!S.recon[code].cleared) S.recon[code].cleared={};
+  if(!S.recon[code].balances) S.recon[code].balances={};
+  return S.recon[code];
+}
+function viewRecon(){
+  var wrap=el("div");
+  var cash=cashAccounts();
+  if(!cash.length){
+    var c0=el("div",{class:"card"});
+    c0.appendChild(el("div",{class:"empty", html:"<b>대사할 계정이 없습니다</b>계정과목에 보통예금이나 현금 계정을 먼저 만들어 주세요."}));
+    wrap.appendChild(c0); return wrap;
+  }
+  var have=false;
+  cash.forEach(function(a){ if(a.code===S.rcAcct) have=true; });
+  if(!have){
+    var pick=cash[0];
+    cash.forEach(function(a){ if(String(a.code).slice(0,3)==="103") pick=a; });
+    S.rcAcct=pick.code;
+  }
+  var code=S.rcAcct;
+  var date=S.rcDate || (S.period==="all" ? todayISO() : monthEnd(S.period));
+  S.rcDate=date;
+  var rec=reconOf(code);
+  var rows=accountRows(code, function(v){ return String(v.date||"") <= date; });
+
+  /* 고르는 줄 */
+  var card=el("div",{class:"card"});
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"은행 대사 · "+accName(code)}),
+    el("span",{class:"tag b", text:date+" 기준"})
+  ]));
+  var g=el("div",{class:"rcgrid"});
+  var f1=el("div",{class:"f"},[el("label",{text:"계정"})]);
+  var sA=el("select",{});
+  cash.forEach(function(a){ sA.appendChild(el("option",{value:a.code, text:a.name+"  ("+String(a.code).slice(0,3)+")"})); });
+  sA.value=code;
+  sA.addEventListener("change", function(){ S.rcAcct=sA.value; renderView(); });
+  f1.appendChild(sA); g.appendChild(f1);
+
+  var f2=el("div",{class:"f"},[el("label",{text:"기준일"})]);
+  var iD=el("input",{type:"date", value:date});
+  iD.addEventListener("change", function(){ S.rcDate=iD.value||date; renderView(); });
+  f2.appendChild(iD); g.appendChild(f2);
+
+  var f3=el("div",{class:"f"},[el("label",{text:"은행 잔액 (통장·앱에 찍힌 금액)"})]);
+  var saved=rec.balances[date];
+  var iB=el("input",{type:"number", step:"1", class:"num", value:(saved===undefined||saved===null?"":saved), placeholder:"0"});
+  iB.addEventListener("change", function(){
+    if(iB.value===""){ delete rec.balances[date]; } else { rec.balances[date]=+iB.value||0; }
+    persistRecon(); renderView();
+  });
+  f3.appendChild(iB); g.appendChild(f3);
+  card.appendChild(g);
+
+  /* 계산 */
+  var B=0, U=0, nU=0;
+  rows.forEach(function(r){
+    var d=(+r.l.dr||0)-(+r.l.cr||0);
+    B+=d;
+    if(!rec.cleared[r.v.id+"#"+r.i]){ U+=d; nU++; }
+  });
+  var book=B-U;
+  var bank=(saved===undefined||saved===null)?null:(+saved||0);
+  var diff=(bank===null)?null:(bank-book);
+
+  var sum=el("div",{class:"rcsum"});
+  function tile(k, v, cls){
+    var d=el("div");
+    d.appendChild(el("dt",{text:k}));
+    d.appendChild(el("dd",{class:cls||"", text:v}));
+    sum.appendChild(d);
+  }
+  tile("장부 잔액", fmt0(B)+"원", B<0?"neg":"");
+  tile("아직 대사 안 된 "+nU+"건", fmt0(U)+"원", U?"neg":"");
+  tile("은행에 반영된 장부", fmt0(book)+"원", "");
+  tile("은행 잔액", bank===null?"—":fmt0(bank)+"원", "");
+  tile("차이", diff===null?"—":fmt0(diff)+"원", diff===null?"":(Math.abs(diff)<0.5?"ok":"neg"));
+  card.appendChild(sum);
+
+  if(diff!==null){
+    var okR=Math.abs(diff)<0.5;
+    card.appendChild(el("div",{class:"chkbar "+(okR?"ok":"bad"), html:
+      svg(okR?"M4 10.4l4 4 8-9":"M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",15)
+      +"<span>"+(okR?"통장과 장부가 맞습니다"
+                    :"아직 "+fmt0(Math.abs(diff))+"원이 설명되지 않습니다 — 통장에는 있는데 전표를 안 쓴 거래가 있는지 보세요")+"</span>"}));
+  }
+  wrap.appendChild(card);
+
+  /* 대사 목록 */
+  var card2=el("div",{class:"card", style:"margin-top:16px;"});
+  var rgt=el("span",{class:"r"});
+  var bAll=el("button",{class:"btn sm", text:"전부 대사"});
+  bAll.addEventListener("click", function(){
+    rows.forEach(function(r){ rec.cleared[r.v.id+"#"+r.i]=true; });
+    persistRecon(); renderView();
+  });
+  var bNone=el("button",{class:"btn sm", text:"대사 지우기"});
+  bNone.addEventListener("click", function(){
+    rows.forEach(function(r){ delete rec.cleared[r.v.id+"#"+r.i]; });
+    persistRecon(); renderView();
+  });
+  rgt.appendChild(bAll); rgt.appendChild(bNone);
+  card2.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"통장에서 확인한 것에 표시하세요"}),
+    rgt
+  ]));
+  if(!rows.length){
+    card2.appendChild(el("div",{class:"empty", html:"<b>기준일까지 이 계정의 거래가 없습니다</b>기준일을 뒤로 옮겨 보세요."}));
+    wrap.appendChild(card2); return wrap;
+  }
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:56px">대사</th><th style="width:96px">작성일</th>'
+    +'<th>적요</th><th style="width:118px">거래처</th><th style="width:132px">상대계정</th>'
+    +'<th class="n" style="width:112px">입금</th><th class="n" style="width:112px">출금</th>'
+    +'<th class="n" style="width:122px">잔액</th></tr></thead>';
+  var tb=el("tbody"), run=0;
+  rows.forEach(function(r){
+    var d=(+r.l.dr||0), c=(+r.l.cr||0), key=r.v.id+"#"+r.i;
+    run += d-c;
+    var on=!!rec.cleared[key];
+    var tr=el("tr",{style:on?"":"background:var(--warn-soft);"});
+    var tdC=el("td");
+    var cb=el("input",{type:"checkbox"});
+    cb.checked=on;
+    cb.addEventListener("change", function(){
+      if(cb.checked) rec.cleared[key]=true; else delete rec.cleared[key];
+      persistRecon(); renderView();
+    });
+    tdC.appendChild(cb); tr.appendChild(tdC);
+    tr.appendChild(el("td",{class:"c", text:r.v.date||""}));
+    tr.appendChild(el("td",{class:"mut", text:r.l.memo||r.v.memo||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:r.l.partner||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:counterName(r.v, r.l)}));
+    tr.appendChild(el("td",{class:"n dr", text:fmt(d)}));
+    tr.appendChild(el("td",{class:"n cr", text:fmt(c)}));
+    tr.appendChild(el("td",{class:"n"+(run<0?" neg":""), style:"font-weight:600;", text:fmt0(run)}));
+    tb.appendChild(tr);
+  });
+  tab.appendChild(tb); tw.appendChild(tab); card2.appendChild(tw);
+  card2.appendChild(el("div",{class:"note", text:
+    "체크는 「통장에서 이 거래를 확인했다」는 표시일 뿐, 전표를 고치지 않습니다. 표시는 따로 저장되고 전표에는 아무 흔적도 남지 않습니다. 노란 줄이 아직 확인되지 않은 거래입니다."}));
+  wrap.appendChild(card2);
   return wrap;
 }
 
 /* ---------- 재무제표 ---------- */
-function buildBS(){
-  var m=tally(upToPeriod), rows=[], tA=0, tL=0, tE=0;
+/* 회계기간 시작부터 오늘까지의 달 — 전표가 없는 달도 고를 수 있게 */
+function bsMonths(){
+  var set={};
+  months().forEach(function(m){ set[m]=1; });
+  var st=String(S.co.fyStart||"").slice(0,7), end=todayISO().slice(0,7);
+  if(st){
+    var y=parseInt(st.slice(0,4),10), mo=parseInt(st.slice(5,7),10);
+    for(var i=0;i<120;i++){
+      var mm=(mo+i-1)%12+1, yy=y+Math.floor((mo+i-1)/12);
+      var k=yy+"-"+(mm<10?"0":"")+mm;
+      set[k]=1;
+      if(k>=end) break;
+    }
+  }
+  return Object.keys(set).sort();
+}
+function asOfFilter(asOf){
+  if(!asOf) return upToPeriod;
+  return function(v){ return ym(v.date)<=asOf; };
+}
+function asOfLabel(asOf){
+  if(!asOf) return (S.period==="all" ? "전체 기간 누계" : S.period+" 말 현재");
+  return asOf+" 말 현재";
+}
+function buildBS(asOf){
+  var m=tally(asOfFilter(asOf)), rows=[], tA=0, tL=0, tE=0;
   BSG.forEach(function(g){
     var items=S.accounts.filter(function(a){
       var c=parseInt(a.code,10); return c>=g.lo && c<=g.hi;
@@ -1192,7 +1654,7 @@ function buildBS(){
     if(g.side==="A") tA+=sum; else if(g.side==="L") tL+=sum; else tE+=sum;
     rows.push({grp:g.t, side:g.side, sum:sum, items:items});
   });
-  var ni=netIncome(tally(upToPeriod));
+  var ni=netIncome(m);
   tE += ni;
   return {rows:rows, tA:tA, tL:tL, tE:tE, ni:ni, diff:tA-(tL+tE)};
 }
@@ -1305,39 +1767,68 @@ function fsTable(sections, totalLabel, totalVal){
 }
 function viewFS(){
   var wrap=el("div");
-  var bs=buildBS();
   var grid=el("div",{class:"fs2"});
+  var asOf = S.bsAsOf || (S.period==="all" ? "" : S.period);
+  var bs = buildBS(asOf);
+  var cmp = S.bsCmp && S.bsCmp!==asOf ? S.bsCmp : "";
+  var bs2 = cmp ? buildBS(cmp) : null;
 
   /* BS */
   var cB=el("div",{class:"card"});
+  var bsHead=el("span",{class:"r"});
+  bsHead.appendChild(el("span",{class:"lb2", text:"기준일"}));
+  var selA=el("select",{class:"mini"});
+  selA.appendChild(el("option",{value:"", text:(S.period==="all"?"전체 기간 누계":"기간 설정 따름 ("+S.period+")")}));
+  bsMonths().forEach(function(m){ selA.appendChild(el("option",{value:m, text:m.replace("-","년 ")+"월 말"})); });
+  selA.value=S.bsAsOf||"";
+  selA.addEventListener("change", function(){ S.bsAsOf=selA.value; renderView(); });
+  bsHead.appendChild(selA);
+  bsHead.appendChild(el("span",{class:"lb2", text:"비교"}));
+  var selB=el("select",{class:"mini"});
+  selB.appendChild(el("option",{value:"", text:"— 없음 —"}));
+  bsMonths().forEach(function(m){ selB.appendChild(el("option",{value:m, text:m.replace("-","년 ")+"월 말"})); });
+  selB.value=S.bsCmp||"";
+  selB.addEventListener("change", function(){ S.bsCmp=selB.value; renderView(); });
+  bsHead.appendChild(selB);
   cB.appendChild(el("div",{class:"ch"},[
-    el("span",{text:"재무상태표"}),
-    el("span",{class:"tag b", text:(S.period==="all"?"전체 기간 누계":S.period+" 말 현재")})
+    el("span",{text:"재무상태표 · "+asOfLabel(asOf)}),
+    bsHead
   ]));
-  var secs=[];
-  secs.push({head:"자산"});
-  bs.rows.filter(function(r){ return r.side==="A"; }).forEach(function(r){ secs.push({title:r.grp, value:r.sum, items:r.items}); });
-  secs.push({head:"부채"});
-  bs.rows.filter(function(r){ return r.side==="L"; }).forEach(function(r){ secs.push({title:r.grp, value:r.sum, items:r.items}); });
-  secs.push({head:"자본"});
-  bs.rows.filter(function(r){ return r.side==="E"; }).forEach(function(r){ secs.push({title:r.grp, value:r.sum, items:r.items}); });
-  var bTab=fsTable(secs, null, null);
-  /* 총계 행들을 직접 덧붙인다 */
+
+  function bsSections(){
+    var secs=[], names={A:"자산", L:"부채", E:"자본"};
+    ["A","L","E"].forEach(function(side){
+      secs.push({head:names[side]});
+      bs.rows.forEach(function(r, i){
+        if(r.side!==side) return;
+        var r2 = bs2 ? bs2.rows[i] : null;
+        var items = r.items.map(function(it, k){
+          return bs2 ? {name:it.name, a:it.bal, b:r2.items[k].bal} : {name:it.name, bal:it.bal};
+        });
+        secs.push(bs2 ? {title:r.grp, a:r.sum, b:r2.sum, items:items}
+                      : {title:r.grp, value:r.sum, items:items});
+      });
+    });
+    return secs;
+  }
+  var bTab = bs2
+    ? fsTable2(bsSections(), null, 0, 0, asOfLabel(asOf).replace(" 현재",""), asOfLabel(cmp).replace(" 현재",""))
+    : fsTable(bsSections(), null, null);
   var tbody=bTab.querySelector("tbody");
-  function totRow(label, val, where){
+  function totRow(label, va, vb, where){
     var t=el("tr",{class:"tot"});
     t.appendChild(el("td",{text:label}));
-    t.appendChild(el("td",{class:"n"+(val<0?" neg":""), text:fmt0(val)}));
+    t.appendChild(el("td",{class:"n"+(va<0?" neg":""), text:fmt0(va)}));
+    if(bs2) t.appendChild(el("td",{class:"n"+(vb<0?" neg":""), text:fmt0(vb)}));
     if(where) tbody.insertBefore(t, where); else tbody.appendChild(t);
   }
-  /* 당기순손익 줄 + 총계 */
   var niRow=el("tr",{class:"sub"});
   niRow.appendChild(el("td",{text:"당기순손익 (누계)"}));
   niRow.appendChild(el("td",{class:"n"+(bs.ni<0?" neg":""), text:fmt0(bs.ni)}));
+  if(bs2) niRow.appendChild(el("td",{class:"n"+(bs2.ni<0?" neg":""), text:fmt0(bs2.ni)}));
   tbody.appendChild(niRow);
-  totRow("자본총계", bs.tE);
-  totRow("부채 및 자본총계", bs.tL+bs.tE);
-  /* 자산총계 / 부채총계를 알맞은 위치에 */
+  totRow("자본총계", bs.tE, bs2?bs2.tE:0);
+  totRow("부채 및 자본총계", bs.tL+bs.tE, bs2?(bs2.tL+bs2.tE):0);
   var trs=Array.prototype.slice.call(tbody.querySelectorAll("tr"));
   var idxL=-1, idxE=-1;
   trs.forEach(function(tr,i){
@@ -1346,8 +1837,8 @@ function viewFS(){
     if(tr.className==="grp" && td.textContent==="부채") idxL=i;
     if(tr.className==="grp" && td.textContent==="자본") idxE=i;
   });
-  if(idxL>=0) totRow("자산총계", bs.tA, trs[idxL]);
-  if(idxE>=0) totRow("부채총계", bs.tL, trs[idxE]);
+  if(idxL>=0) totRow("자산총계", bs.tA, bs2?bs2.tA:0, trs[idxL]);
+  if(idxE>=0) totRow("부채총계", bs.tL, bs2?bs2.tL:0, trs[idxE]);
   cB.appendChild(bTab);
   var okB=Math.abs(bs.diff)<0.5;
   cB.appendChild(el("div",{class:"chkbar "+(okB?"ok":"bad"), html:
@@ -1940,6 +2431,7 @@ function applySeed(seed){
     ? seed.accounts.slice() : DEFAULT_ACCOUNTS.slice();
   S.partners = Array.isArray(seed.partners) ? seed.partners.slice() : [];
   S.projects = Array.isArray(seed.projects) ? seed.projects.slice() : [];
+  S.recon = (seed.recon && typeof seed.recon==="object") ? seed.recon : {};
   S.vouchers = Array.isArray(seed.vouchers) ? seed.vouchers.slice() : [];
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
@@ -1951,7 +2443,8 @@ function saveAll(){
   try{
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
-      partners:S.partners, projects:S.projects, vouchers:S.vouchers, seedStamp:S.seedStamp||"",
+      partners:S.partners, projects:S.projects, vouchers:S.vouchers,
+      recon:S.recon||{}, seedStamp:S.seedStamp||"",
       savedAt:new Date().toISOString()
     }));
     S.dbState="이 브라우저에 저장됨";
@@ -1967,7 +2460,7 @@ function loadAll(){
 
   if(!raw){
     if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[]; S.firstRun=true;
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[]; S.recon={}; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
   }
@@ -1978,10 +2471,11 @@ function loadAll(){
     S.partners=Array.isArray(d.partners)?d.partners.slice():[];
     S.projects=Array.isArray(d.projects)?d.projects.slice():[];
     S.vouchers=Array.isArray(d.vouchers)?d.vouchers.slice():[];
+    S.recon=(d.recon && typeof d.recon==="object")?d.recon:{};
     S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[];
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[]; S.recon={};
     S.dbState="저장된 자료를 읽지 못했습니다";
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
@@ -2016,6 +2510,7 @@ function persistPartners(){
   saveAll();
 }
 function persistAccounts(){ saveAll(); }
+function persistRecon(){ saveAll(); }
 function persistVoucher(id, doc){
   var i=-1; S.vouchers.forEach(function(v,k){ if(v.id===id) i=k; });
   var local=Object.assign({id:id}, doc);
@@ -2026,7 +2521,7 @@ function backupJson(){
   return JSON.stringify({
     app:"gongan-ledger", version:1, exportedAt:new Date().toISOString(),
     company:S.co, accounts:S.accounts, partners:S.partners, projects:S.projects,
-    vouchers:S.vouchers
+    recon:S.recon||{}, vouchers:S.vouchers
   }, null, 1);
 }
 function restoreJson(text){
@@ -2043,6 +2538,16 @@ function restoreJson(text){
   (d.partners||[]).forEach(function(p){ if(p && p.name && !ph[p.name]) S.partners.push(p); });
   var jh={}; S.projects.forEach(function(p){ jh[p.name]=1; });
   (d.projects||[]).forEach(function(p){ if(p && p.name && !jh[p.name]) S.projects.push(p); });
+  if(d.recon && typeof d.recon==="object"){
+    if(!S.recon) S.recon={};
+    Object.keys(d.recon).forEach(function(code){
+      var src=d.recon[code]||{}, dst=S.recon[code]||(S.recon[code]={cleared:{}, balances:{}});
+      if(!dst.cleared) dst.cleared={};
+      if(!dst.balances) dst.balances={};
+      Object.keys(src.cleared||{}).forEach(function(k){ dst.cleared[k]=src.cleared[k]; });
+      Object.keys(src.balances||{}).forEach(function(k){ if(dst.balances[k]===undefined) dst.balances[k]=src.balances[k]; });
+    });
+  }
   var here={}; S.vouchers.forEach(function(v){ here[v.id]=1; });
   var added=0;
   d.vouchers.forEach(function(v){ if(v && v.id && !here[v.id]){ S.vouchers.push(v); added++; } });
@@ -2065,12 +2570,13 @@ function pickBackup(){
 /* ---------- 렌더 ---------- */
 function renderView(){
   var v=$("#view"); v.innerHTML="";
-  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
+  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"은행대사", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
   var subs={
     entry:"대차가 맞을 때만 저장됩니다 · 저장 후에는 역분개로만 바로잡습니다",
     ledger:"저장된 전표는 지워지지 않습니다 · 잘못된 건 역분개로 취소합니다",
-    pivot:"계정별 차변·대변 합계와 잔액입니다",
-    fs:"집계표에서 자동으로 만들어집니다",
+    pivot:"계정을 누르면 그 계정의 거래 내역과 잔액이 펼쳐집니다",
+    fs:"집계표에서 자동으로 만들어집니다 · 재무상태표는 원하는 시점을 고르실 수 있습니다",
+    recon:"통장에 찍힌 잔액과 장부 잔액을 맞춰 봅니다 · 전표는 건드리지 않습니다",
     projects:"전표 줄마다 프로젝트를 달면 여기서 프로젝트별로 얼마인지 보입니다",
     partners:"등록해 두면 전표에서 이름만 골라도 사업자번호가 따라옵니다",
     accounts:"코드 앞 3자리가 더존 표준코드입니다",
@@ -2081,7 +2587,10 @@ function renderView(){
   var acts=$("#vActions"); acts.innerHTML="";
   if(S.view!=="entry"){
     var nb=el("button",{class:"btn pri", html:svg("M10 5v10M5 10h10",14)+"<span>전표 쓰기</span>"});
-    nb.addEventListener("click", function(){ S.draft=newDraft(); S.view="entry"; render(); });
+    nb.addEventListener("click", function(){
+      if(S.editId && !confirm("고치던 전표가 있습니다. 수정을 취소하고 새 전표를 쓰시겠습니까?")) return;
+      S.editId=null; S.draft=newDraft(); S.view="entry"; render();
+    });
     acts.appendChild(nb);
   }
   var g=globalBalance();
@@ -2108,6 +2617,7 @@ function renderView(){
   else if(S.view==="ledger") node=viewLedger();
   else if(S.view==="pivot") node=viewPivot();
   else if(S.view==="fs") node=viewFS();
+  else if(S.view==="recon") node=viewRecon();
   else if(S.view==="projects") node=viewProjects();
   else if(S.view==="partners") node=viewPartners();
   else if(S.view==="accounts") node=viewAccounts();
