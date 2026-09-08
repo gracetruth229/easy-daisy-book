@@ -473,7 +473,8 @@ var S = {
   co:{name:"㈜공간네트웍스", fyLabel:"제1기", fyStart:"2026-06-23"},
   accounts:[], vouchers:[], partners:[], projects:[], period:"all", view:"entry",
   db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
-  lastType:"은행거래", ldHist:false, ldFocus:"",
+  trash:[],
+  lastType:"은행거래", ldTab:"book", ldFocus:"",
   acct:"", recon:{}, rcAcct:"", rcDate:"", bsAsOf:"", bsCmp:""
 };
 
@@ -571,6 +572,28 @@ function toast(msg){
 function todayISO(){
   var d=new Date(), p=function(n){ return (n<10?"0":"")+n; };
   return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());
+}
+
+/* 지운 전표는 S.trash 로 갈라 둔다 — S.vouchers 에는 살아 있는 것만 남는다 */
+function sortTrash(){
+  S.trash.sort(function(a,b){
+    return String(b.deletedAt||"").localeCompare(String(a.deletedAt||""));
+  });
+}
+function splitVouchers(all){
+  var live=[], gone=[];
+  (all||[]).forEach(function(v){ (v && v.deleted ? gone : live).push(v); });
+  S.vouchers=live; S.trash=gone; sortTrash();
+}
+function allVouchers(){ return S.vouchers.concat(S.trash); }
+/* 살아 있는 것과 뺀 것 중 알맞은 쪽에 넣는다 */
+function putLocal(id, doc){
+  var local=Object.assign({id:id}, doc);
+  function drop(arr){ for(var i=arr.length-1;i>=0;i--) if(arr[i].id===id) arr.splice(i,1); }
+  drop(S.vouchers); drop(S.trash);
+  (local.deleted ? S.trash : S.vouchers).push(local);
+  sortTrash();
+  return local;
 }
 
 /* 기간 필터 */
@@ -898,7 +921,7 @@ function viewEntry(){
       var vb=el("button",{class:"btn sm", text:"보기"});
       vb.addEventListener("click", function(){
         if(!leaveEdit("ledger")) return;
-        S.ldHist=false; S.ldFocus=v.id; S.ldType="all"; S.ldQ=""; S.period="all";
+        S.ldTab="book"; S.ldFocus=v.id; S.ldType="all"; S.ldQ=""; S.period="all";
         S.view="ledger"; render();
       });
       ta.appendChild(eb); ta.appendChild(vb); tr.appendChild(ta);
@@ -956,6 +979,46 @@ function reverseVoucher(v){
     memo:"취소: " + (v.memo||""), lines:lines, reverses:v.id,
     updatedAt:new Date().toISOString()});
   toast("역분개 전표를 만들었습니다");
+  render();
+}
+function deleteVoucher(v){
+  var rev=reversedIds(), extra="";
+  if(v.reverses) extra = "\n\n" + "이 전표는 다른 전표를 취소한 역분개 전표입니다. 빼면 원래 전표의 취소가 풀립니다.";
+  else if(rev[v.id]) extra = "\n\n" + "이 전표에는 취소(역분개) 전표가 붙어 있습니다. 이것만 빼면 취소 전표가 홀로 남습니다.";
+  var msg = "⚠ 이 전표를 장부에서 뺍니다." + "\n\n"
+    + v.date + " · " + (v.memo||"(적요 없음)") + "\n"
+    + fmt0(voucherAmount(v)) + "원 · " + ((v.lines||[]).length) + "줄" + "\n\n"
+    + "빼고 나면 전표장·집계표·재무제표·내보내기 어디에도 나오지 않습니다." + "\n"
+    + "다만 기록은 지워지지 않습니다. 「삭제이력」에 남고 언제든 되살리실 수 있습니다." + "\n\n"
+    + "회계에서는 지우는 것보다 역분개로 취소하는 편이 안전합니다." + "\n"
+    + "세무사에게 이미 넘긴 전표라면 빼지 마시고 역분개를 쓰세요."
+    + extra + "\n\n" + "정말 빼시겠습니까?";
+  if(!confirm(msg)) return;
+  var why = prompt("왜 빼시나요? (삭제이력에 남습니다)", "");
+  if(why===null) return;
+  var doc = Object.assign({}, v);
+  delete doc.id;
+  doc.deleted = true;
+  doc.deletedAt = new Date().toISOString();
+  doc.deleteNote = String(why||"").trim();
+  doc.unlocked = false;
+  persistVoucher(v.id, doc);
+  if(S.ldFocus===v.id) S.ldFocus="";
+  toast("장부에서 뺐습니다 — 「삭제이력」에 남아 있습니다");
+  render();
+}
+function restoreVoucher(v){
+  var msg = "이 전표를 장부로 되돌립니다." + "\n\n"
+    + v.date + " · " + (v.memo||"(적요 없음)") + "\n"
+    + fmt0(voucherAmount(v)) + "원" + "\n\n"
+    + "다시 전표장과 재무제표에 들어갑니다.";
+  if(!confirm(msg)) return;
+  var doc = Object.assign({}, v);
+  delete doc.id;
+  doc.deleted = false;
+  doc.restoredAt = new Date().toISOString();
+  persistVoucher(v.id, doc);
+  toast("되살렸습니다");
   render();
 }
 function unlockVoucher(v){
@@ -1146,7 +1209,7 @@ function historyCard(){
     var tdA=el("td");
     var b=el("button",{class:"btn sm", text:"전표 보기"});
     b.addEventListener("click", function(){
-      S.ldHist=false; S.ldFocus=v.id; S.ldType="all"; S.ldQ=""; S.period="all"; render();
+      S.ldTab="book"; S.ldFocus=v.id; S.ldType="all"; S.ldQ=""; S.period="all"; render();
     });
     tdA.appendChild(b); tr.appendChild(tdA);
     tb.appendChild(tr);
@@ -1157,25 +1220,86 @@ function historyCard(){
   wrap.appendChild(card);
   return wrap;
 }
+function trashCard(){
+  var q=String(S.ldQ||"").trim().toLowerCase();
+  var all=S.trash.slice();
+  var list=all.filter(function(v){
+    if(!q) return true;
+    return (voucherText(v)+" "+(v.deleteNote||"")).toLowerCase().indexOf(q)>=0;
+  });
+  var wrap=el("div");
+  var bar=el("div",{class:"ldbar"});
+  bar.appendChild(srchBox("적요·사유·거래처로 찾기"));
+  if(q){
+    var cb=el("button",{class:"btn sm", text:"검색 지우기"});
+    cb.addEventListener("click", function(){ S.ldQ=""; renderView(); });
+    bar.appendChild(cb);
+  }
+  bar.appendChild(el("span",{class:"sp"}));
+  bar.appendChild(el("span",{class:"cntx", text: q ? (all.length+"장 중 "+list.length+"장") : (all.length+"장")}));
+  wrap.appendChild(bar);
+
+  var card=el("div",{class:"card"});
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"삭제이력"}),
+    el("span",{class:"tag b", text:"장부·재무제표에서는 빠져 있지만 기록은 지워지지 않았습니다"})
+  ]));
+  if(!list.length){
+    card.appendChild(el("div",{class:"empty", html: all.length
+      ? "<b>찾는 내용이 없습니다</b>검색어를 지워 보세요."
+      : "<b>뺀 전표가 없습니다</b>전표장에서 「삭제」를 누르면 여기로 옵니다. 지워지는 것이 아니라 옮겨지는 것입니다."}));
+    wrap.appendChild(card); return wrap;
+  }
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:100px">뺀 날</th><th style="width:96px">작성일</th>'
+    +'<th style="width:88px">유형</th><th>적요</th><th class="n" style="width:118px">금액</th>'
+    +'<th>왜 뺐나</th><th style="width:150px"></th></tr></thead>';
+  var tb=el("tbody");
+  list.forEach(function(v){
+    var tr=el("tr");
+    tr.appendChild(el("td",{class:"c", text:String(v.deletedAt||"").slice(0,10)||"—"}));
+    tr.appendChild(el("td",{class:"c", text:v.date||""}));
+    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:v.type||"—"})]));
+    tr.appendChild(el("td",{class:"mut", text:v.memo||"(적요 없음)"}));
+    tr.appendChild(el("td",{class:"n", text:fmt0(voucherAmount(v))}));
+    tr.appendChild(el("td",{class:"mut", text:v.deleteNote||"—"}));
+    var ta=el("td");
+    var vb=el("button",{class:"btn sm", text:"내용 보기"});
+    vb.addEventListener("click", function(){
+      S.ldTab="book"; S.ldFocus=v.id; S.ldType="all"; S.ldQ=""; S.period="all"; render();
+    });
+    var rb=el("button",{class:"btn sm pri", style:"margin-left:5px;", text:"되살리기"});
+    rb.addEventListener("click", function(){ restoreVoucher(v); });
+    ta.appendChild(vb); ta.appendChild(rb); tr.appendChild(ta);
+    tb.appendChild(tr);
+  });
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  card.appendChild(el("div",{class:"note", text:
+    "뺀 전표는 계산에서만 빠집니다. 내용은 그대로 남아 있어서 「내용 보기」로 확인하고 「되살리기」로 언제든 되돌릴 수 있습니다. 백업 파일에도 함께 담기므로 되살릴 길이 없어지는 일은 없습니다."}));
+  wrap.appendChild(card);
+  return wrap;
+}
 function viewLedger(){
   var wrap=el("div");
 
   /* 전표장 / 수정이력 */
   var tabs=el("div",{class:"ldbar"});
   var tseg=el("span",{class:"seg"});
-  [["book","전표장"],["hist","수정이력"]].forEach(function(p){
-    var isH=(p[0]==="hist");
-    var b=el("button",{class:(isH===!!S.ldHist?"on":"")});
+  var counts={book:S.vouchers.length, hist:historyList().length, trash:S.trash.length};
+  [["book","전표장"],["hist","수정이력"],["trash","삭제이력"]].forEach(function(p){
+    var k=p[0];
+    var b=el("button",{class:(S.ldTab===k?"on":"")});
     b.appendChild(el("span",{text:p[1]}));
-    b.appendChild(el("span",{class:"c", text:String(isH?historyList().length:S.vouchers.length)}));
-    b.addEventListener("click", function(){ S.ldHist=isH; S.ldFocus=""; S.ldQ=""; renderView(); });
+    b.appendChild(el("span",{class:"c", text:String(counts[k])}));
+    b.addEventListener("click", function(){ S.ldTab=k; S.ldFocus=""; S.ldQ=""; renderView(); });
     tseg.appendChild(b);
   });
   tabs.appendChild(tseg);
   wrap.appendChild(tabs);
-  if(S.ldHist){ wrap.appendChild(historyCard()); return wrap; }
+  if(S.ldTab==="hist"){ wrap.appendChild(historyCard()); return wrap; }
+  if(S.ldTab==="trash"){ wrap.appendChild(trashCard()); return wrap; }
 
-  var base=(S.ldFocus ? S.vouchers.slice() : periodVouchers().slice()).sort(function(a,b){
+  var base=(S.ldFocus ? allVouchers() : periodVouchers().slice()).sort(function(a,b){
     return (a.date||"").localeCompare(b.date||"") || (a.id||"").localeCompare(b.id||"");
   });
 
@@ -1262,9 +1386,14 @@ function viewLedger(){
     if(v.reverses) box.appendChild(el("span",{class:"tag c", text:"역분개"}));
     if(rev[v.id]) box.appendChild(el("span",{class:"tag w", text:"취소됨"}));
     if(v.unlocked) box.appendChild(el("span",{class:"tag c", text:"잠금 풀림"}));
+    if(v.deleted) box.appendChild(el("span",{class:"tag c", text:"장부에서 뺀 전표 · "+String(v.deletedAt||"").slice(0,10)}));
 
     var sp=el("span",{style:"margin-left:auto;display:flex;gap:6px;"});
-    if(v.unlocked){
+    if(v.deleted){
+      var reb=el("button",{class:"btn sm pri", text:"되살리기"});
+      reb.addEventListener("click", function(){ restoreVoucher(v); });
+      sp.appendChild(reb);
+    } else if(v.unlocked){
       var mb=el("button",{class:"btn sm pri", text:"수정"});
       mb.addEventListener("click", function(){ loadForEdit(v); });
       var lb=el("button",{class:"btn sm", text:"다시 잠금"});
@@ -1280,7 +1409,9 @@ function viewLedger(){
       cb.addEventListener("click", function(){ copyToDraft(v); });
       var ub=el("button",{class:"btn sm", text:"잠금 해제"});
       ub.addEventListener("click", function(){ unlockVoucher(v); });
-      sp.appendChild(cb); sp.appendChild(ub);
+      var db2=el("button",{class:"btn sm danger", text:"삭제"});
+      db2.addEventListener("click", function(){ deleteVoucher(v); });
+      sp.appendChild(cb); sp.appendChild(ub); sp.appendChild(db2);
     }
     box.appendChild(sp);
     gtd.appendChild(box); gtr.appendChild(gtd); tb.appendChild(gtr);
@@ -1314,7 +1445,7 @@ function viewLedger(){
     + "<span>"+(ok?("차변 합계와 대변 합계가 같습니다"+((S.ldType==="all"&&!q)?"":" (고른 전표 기준)"))
                  :"대차가 "+fmt0(Math.abs(diff))+"원 맞지 않습니다")+"</span>"}));
   card.appendChild(el("div",{class:"note", text:
-    "여기에는 고쳐진 뒤의 내용만 보입니다 — 무엇을 언제 왜 고쳤는지는 위 「수정이력」에서 찾으실 수 있습니다. 저장한 전표는 잠깁니다. 오타처럼 사소한 것은 「잠금 해제」 후 고치시면 되고, 고친 흔적은 남습니다. 거래 자체가 잘못됐다면 고치지 말고 「역분개」로 취소 전표를 만드세요 — 원래 기록이 남아야 세무사가 흐름을 따라올 수 있습니다. 전표를 지우는 기능은 없습니다."}));
+    "여기에는 고쳐진 뒤의 내용만 보입니다 — 무엇을 언제 왜 고쳤는지는 위 「수정이력」에서 찾으실 수 있습니다. 저장한 전표는 잠깁니다. 오타처럼 사소한 것은 「잠금 해제」 후 고치시면 되고, 고친 흔적은 남습니다. 거래 자체가 잘못됐다면 고치지 말고 「역분개」로 취소 전표를 만드세요 — 원래 기록이 남아야 세무사가 흐름을 따라올 수 있습니다. 「삭제」는 장부에서 빼기만 할 뿐 기록을 지우지 않습니다. 뺀 전표는 위 「삭제이력」에 남고 되살릴 수 있습니다."}));
   wrap.appendChild(card);
   return wrap;
 }
@@ -1387,7 +1518,7 @@ function accountLedgerCard(code){
     var ta=el("td");
     var vb=el("button",{class:"btn sm", text:"보기"});
     vb.addEventListener("click", function(){
-      S.ldHist=false; S.ldFocus=r.v.id; S.ldType="all"; S.ldQ=""; S.period="all";
+      S.ldTab="book"; S.ldFocus=r.v.id; S.ldType="all"; S.ldQ=""; S.period="all";
       S.view="ledger"; render();
     });
     ta.appendChild(vb); tr.appendChild(ta);
@@ -2442,7 +2573,7 @@ function applySeed(seed){
   S.partners = Array.isArray(seed.partners) ? seed.partners.slice() : [];
   S.projects = Array.isArray(seed.projects) ? seed.projects.slice() : [];
   S.recon = (seed.recon && typeof seed.recon==="object") ? seed.recon : {};
-  S.vouchers = Array.isArray(seed.vouchers) ? seed.vouchers.slice() : [];
+  splitVouchers((Array.isArray(seed.vouchers)?seed.vouchers:[]).concat(Array.isArray(seed.trash)?seed.trash:[]));
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
   S.seedStamp = seed.exportedAt || "";
@@ -2453,7 +2584,7 @@ function saveAll(){
   try{
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
-      partners:S.partners, projects:S.projects, vouchers:S.vouchers,
+      partners:S.partners, projects:S.projects, vouchers:S.vouchers, trash:S.trash,
       recon:S.recon||{}, seedStamp:S.seedStamp||"",
       savedAt:new Date().toISOString()
     }));
@@ -2470,7 +2601,7 @@ function loadAll(){
 
   if(!raw){
     if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[]; S.recon={}; S.firstRun=true;
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
   }
@@ -2480,12 +2611,12 @@ function loadAll(){
     S.accounts=(Array.isArray(d.accounts)&&d.accounts.length)?d.accounts.slice():DEFAULT_ACCOUNTS.slice();
     S.partners=Array.isArray(d.partners)?d.partners.slice():[];
     S.projects=Array.isArray(d.projects)?d.projects.slice():[];
-    S.vouchers=Array.isArray(d.vouchers)?d.vouchers.slice():[];
+    splitVouchers((Array.isArray(d.vouchers)?d.vouchers:[]).concat(Array.isArray(d.trash)?d.trash:[]));
     S.recon=(d.recon && typeof d.recon==="object")?d.recon:{};
     S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.partners=[]; S.projects=[]; S.recon={};
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={};
     S.dbState="저장된 자료를 읽지 못했습니다";
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
@@ -2522,16 +2653,14 @@ function persistPartners(){
 function persistAccounts(){ saveAll(); }
 function persistRecon(){ saveAll(); }
 function persistVoucher(id, doc){
-  var i=-1; S.vouchers.forEach(function(v,k){ if(v.id===id) i=k; });
-  var local=Object.assign({id:id}, doc);
-  if(i>=0) S.vouchers[i]=local; else S.vouchers.push(local);
+  putLocal(id, doc);
   S.firstRun=false; saveAll();
 }
 function backupJson(){
   return JSON.stringify({
     app:"gongan-ledger", version:1, exportedAt:new Date().toISOString(),
     company:S.co, accounts:S.accounts, partners:S.partners, projects:S.projects,
-    recon:S.recon||{}, vouchers:S.vouchers
+    recon:S.recon||{}, vouchers:S.vouchers, trash:S.trash
   }, null, 1);
 }
 function restoreJson(text){
@@ -2558,9 +2687,12 @@ function restoreJson(text){
       Object.keys(src.balances||{}).forEach(function(k){ if(dst.balances[k]===undefined) dst.balances[k]=src.balances[k]; });
     });
   }
-  var here={}; S.vouchers.forEach(function(v){ here[v.id]=1; });
+  var here={}; allVouchers().forEach(function(v){ here[v.id]=1; });
   var added=0;
-  d.vouchers.forEach(function(v){ if(v && v.id && !here[v.id]){ S.vouchers.push(v); added++; } });
+  (d.vouchers||[]).concat(d.trash||[]).forEach(function(v){
+    if(v && v.id && !here[v.id]){ (v.deleted ? S.trash : S.vouchers).push(v); added++; }
+  });
+  sortTrash();
   S.firstRun=false; saveAll();
   toast("되살렸습니다 · 전표 "+added+"장 추가"); render();
 }
@@ -2583,7 +2715,7 @@ function renderView(){
   var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"은행대사", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
   var subs={
     entry:"대차가 맞을 때만 저장됩니다 · 저장 후에는 역분개로만 바로잡습니다",
-    ledger:"저장된 전표는 지워지지 않습니다 · 잘못된 건 역분개로 취소합니다",
+    ledger:"삭제해도 기록은 지워지지 않습니다 · 「삭제이력」에서 되살릴 수 있습니다",
     pivot:"계정을 누르면 그 계정의 거래 내역과 잔액이 펼쳐집니다",
     fs:"집계표에서 자동으로 만들어집니다 · 재무상태표는 원하는 시점을 고르실 수 있습니다",
     recon:"통장에 찍힌 잔액과 장부 잔액을 맞춰 봅니다 · 전표는 건드리지 않습니다",
