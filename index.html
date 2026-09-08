@@ -2314,6 +2314,8 @@ function buildXlsx(sheets){
   return zipStore(files);
 }
 var DL=null;
+/* 파일을 실제로 내려받을 수 있는 화면인가 — 단독 파일 판에서는 항상 가능 */
+function canSave(){ return true; }
 async function saveFile(filename, data){
   if(DL){
     try{ await DL.save({filename:filename, data:data}); toast("저장했습니다 · "+filename); return; }
@@ -2332,9 +2334,17 @@ async function saveFile(filename, data){
 function tag(){ return S.period==="all" ? "전체" : S.period.replace("-",""); }
 function viewExport(){
   var wrap=el("div");
-  if(!DL){
-    wrap.appendChild(el("div",{class:"banner w", html:svg("M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",17)
-      +"<span><b>파일 저장을 쓸 수 없는 화면입니다.</b> 아래 표를 직접 복사해 쓰시거나, 브라우저에서 이 페이지를 열어 주세요.</span>"}));
+  if(!canSave()){
+    var wb=el("div",{class:"banner w", html:svg("M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",17)
+      +"<span><b>파일 저장 권한이 아직 열리지 않았습니다.</b> 「다시 시도」를 눌러 보시고, 그래도 안 되면 내려받기가 되는 파일 판(내장부.html)에서 뽑으세요.</span>"});
+    var rb=el("button",{class:"btn sm", style:"margin-left:auto;flex:none;", text:"다시 시도"});
+    rb.addEventListener("click", function(){
+      if(!(window.claude && typeof claude.use === "function")){ toast("이 화면에서는 열 수 없습니다"); return; }
+      claude.use("downloads").then(function(x){ DL=x; toast("이제 내려받으실 수 있습니다"); renderView(); },
+                                   function(){ toast("아직 열리지 않습니다"); });
+    });
+    wb.appendChild(rb);
+    wrap.appendChild(wb);
   }
   var card=el("div",{class:"card"});
   card.appendChild(el("div",{class:"ch"},[
@@ -2348,7 +2358,7 @@ function viewExport(){
     c.appendChild(el("span",{text:desc}));
     var b=el("button",{class:"btn pri", text:btnLabel});
     b.addEventListener("click", fn);
-    if(!DL) b.setAttribute("disabled","disabled");
+    if(!canSave()) b.setAttribute("disabled","disabled");
     c.appendChild(b); return c;
   }
   grid.appendChild(xcard("회계보고 통합 엑셀",
