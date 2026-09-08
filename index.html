@@ -1771,7 +1771,8 @@ var NODEDUCT = [
 function vatAccounts(){
   var out=[], inn=[];
   S.accounts.forEach(function(a){
-    if(String(a.name||"").indexOf("부가세")<0) return;
+    var nm=String(a.name||"");
+    if(nm.indexOf("부가세")<0 && nm.indexOf("부가가치세")<0 && nm.indexOf("VAT")<0) return;
     var c=parseInt(a.code,10);
     if(c>=2500000 && c<=2999999) out.push(a.code);
     else if(c>=1000000 && c<=2499999) inn.push(a.code);
@@ -1802,20 +1803,28 @@ function noDeductHint(v){
   });
   return hit;
 }
-/* 장부에서 세금계산서 목록을 뽑는다 */
+/* 장부에서 세금계산서 목록을 뽑는다
+   발생 = 그 기간에 주고받은 세금계산서 (신고 대상)
+   취소 = 역분개로 되돌린 것 (신고에서 차감)
+   정리 = 지난 기수 납부·환급을 계정에서 털어낸 것 (신고와 무관) */
 function bookTaxDocs(from, to){
   var va=vatAccounts(), sale=[], buy=[], isOut={}, isIn={};
   va.out.forEach(function(c){ isOut[c]=1; });
   va.inn.forEach(function(c){ isIn[c]=1; });
-  function mk(v, l, tax, total){
+  function mk(v, l, amt, total, kind){
     var partner=l.partner||"", biz=l.bizno||"";
     (v.lines||[]).forEach(function(x){
       if(!partner && x.partner) partner=x.partner;
       if(!biz && x.bizno) biz=x.bizno;
     });
     return {key:v.id+"#"+l.code, date:v.date||"", memo:l.memo||v.memo||"",
-            partner:partner, biz:bizDigits(biz), tax:tax,
-            supply:Math.round(total-tax), v:v, hint:noDeductHint(v)};
+            partner:partner, biz:bizDigits(biz), tax:amt, kind:kind,
+            supply:Math.round((total-Math.abs(amt))*(amt<0?-1:1)),
+            v:v, hint:noDeductHint(v)};
+  }
+  function classify(v, amt){
+    if(amt>0) return "발생";
+    return v.reverses ? "취소" : "정리";
   }
   S.vouchers.forEach(function(v){
     var d=String(v.date||"");
@@ -1823,13 +1832,25 @@ function bookTaxDocs(from, to){
     var total=voucherAmount(v);
     (v.lines||[]).forEach(function(l){
       var dr=(+l.dr||0), cr=(+l.cr||0);
-      if(isOut[l.code]){ var t1=cr-dr; if(t1) sale.push(mk(v,l,t1,total)); }
-      else if(isIn[l.code]){ var t2=dr-cr; if(t2) buy.push(mk(v,l,t2,total)); }
+      if(isOut[l.code]){ var t1=cr-dr; if(t1) sale.push(mk(v,l,t1,total,classify(v,t1))); }
+      else if(isIn[l.code]){ var t2=dr-cr; if(t2) buy.push(mk(v,l,t2,total,classify(v,t2))); }
     });
   });
   function bydate(a,b){ return String(a.date).localeCompare(String(b.date)); }
   sale.sort(bydate); buy.sort(bydate);
   return {sale:sale, buy:buy};
+}
+/* 신고에 들어가는 것만 — 정리분은 뺀다. 단 사용자가 되돌린 것은 넣는다 */
+function filed(list, st){
+  return list.filter(function(x){
+    if(x.kind==="정리") return !!(st.keep && st.keep[x.key]);
+    return true;
+  });
+}
+function settled(list, st){
+  return list.filter(function(x){
+    return x.kind==="정리" && !(st.keep && st.keep[x.key]);
+  });
 }
 /* 홈택스에서 복사해 온 줄을 읽는다 — 날짜·사업자번호·금액만 찾는다 */
 function parsePaste(text){
@@ -1909,9 +1930,10 @@ function matchDocs(book, tax){
 }
 function vatOf(key){
   if(!S.vat) S.vat={};
-  if(!S.vat[key]) S.vat[key]={saleText:"", buyText:"", nod:{}, prepaid:0, ecredit:true};
+  if(!S.vat[key]) S.vat[key]={saleText:"", buyText:"", nod:{}, keep:{}, prepaid:0, ecredit:true};
   var o=S.vat[key];
   if(!o.nod) o.nod={};
+  if(!o.keep) o.keep={};
   return o;
 }
 function sumTax(list){ var t=0; list.forEach(function(x){ t+=(+x.tax||0); }); return t; }
@@ -1933,7 +1955,9 @@ function viewVat(){
   }
   if(qs.indexOf(S.vatQ)<0) S.vatQ=qs[qs.length-1];
   var R=qRange(S.vatQ), st=vatOf(S.vatQ);
-  var book=bookTaxDocs(R.from, R.to);
+  var raw=bookTaxDocs(R.from, R.to);
+  var book={sale:filed(raw.sale, st), buy:filed(raw.buy, st)};
+  var settle={sale:settled(raw.sale, st), buy:settled(raw.buy, st)};
   var htSale=parsePaste(st.saleText), htBuy=parsePaste(st.buyText);
   var mSale=matchDocs(book.sale, htSale), mBuy=matchDocs(book.buy, htBuy);
 
@@ -1969,8 +1993,18 @@ function viewVat(){
   tile("매입세액", fmt0(inTax)+"원");
   card.appendChild(sum);
   card.appendChild(el("div",{class:"note", text:
-    R.from+" ~ "+R.to+" 사이 전표에서 「예수부가세」가 붙은 줄을 매출로, 「선급부가세」가 붙은 줄을 매입으로 모았습니다. 공급가액은 전표 총액에서 세액을 뺀 값입니다."}));
+    R.from+" ~ "+R.to+" 사이에 주고받은 세금계산서입니다. 매출은 「예수부가세」가 대변에 선 줄, 매입은 「선급부가세」가 차변에 선 줄입니다. 반대쪽에 선 줄은 지난 기수 납부·환급을 계정에서 털어낸 정리 전표로 보고 신고에서 뺍니다 — 역분개로 취소한 것은 그대로 차감합니다. 공급가액은 전표 총액에서 세액을 뺀 값입니다."}));
   wrap.appendChild(card);
+
+  /* 매출이 하나도 안 잡히면 계정 이름부터 의심한다 */
+  if(!book.sale.length && book.buy.length){
+    var wb0=el("div",{class:"banner w", style:"margin-top:16px;"});
+    wb0.innerHTML = svg("M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",17)
+      + "<span><b>이 기간 매출세액이 0으로 잡혔습니다.</b> 매출 세금계산서를 발급하셨다면, 그 전표의 부가세 줄이 "
+      + "「" + (vatAccounts().out.length ? vatAccounts().out.map(accName).join("」 「") : "없음") + "」 계정으로 들어갔는지 확인해 주세요. "
+      + "다른 이름의 계정을 쓰셨다면 계정과목에서 이름에 「부가세」가 들어가게 고치시면 잡힙니다.</span>";
+    wrap.appendChild(wb0);
+  }
 
   /* 2. 예상 납부·환급 */
   var c2=el("div",{class:"card", style:"margin-top:16px;"});
@@ -2057,6 +2091,44 @@ function viewVat(){
   c2.appendChild(el("div",{class:"note", text:
     "매출세액에서 매입세액을 뺀 값입니다. 접대비·비영업용 승용차·면세사업 관련 매입세액은 공제되지 않으므로, 위에서 표시하지 않으면 실제 납부세액보다 적게 나옵니다. 신용카드매출전표 발행세액공제나 의제매입세액 같은 항목은 넣지 않았습니다."}));
   wrap.appendChild(c2);
+
+  /* 정리분 — 신고에서 뺀 것 */
+  var setAll=settle.sale.concat(settle.buy);
+  if(setAll.length || (st.keep && Object.keys(st.keep).length)){
+    var kept=raw.sale.concat(raw.buy).filter(function(x){ return x.kind==="정리" && st.keep[x.key]; });
+    var rows=setAll.concat(kept);
+    var c5=el("div",{class:"card", style:"margin-top:16px;"});
+    c5.appendChild(el("div",{class:"ch"},[
+      el("span",{text:"부가세 정리 전표 · 신고에서 뺀 금액"}),
+      el("span",{class:"tag b", text:rows.length+"줄"})
+    ]));
+    var tw5=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tab5=el("table");
+    tab5.innerHTML='<thead><tr><th style="width:66px">신고 포함</th><th style="width:96px">작성일</th>'
+      +'<th style="width:80px">구분</th><th style="width:140px">거래처</th><th>적요</th>'
+      +'<th class="n" style="width:110px">금액</th></tr></thead>';
+    var tb5=el("tbody");
+    rows.sort(function(a,b){ return String(a.date).localeCompare(String(b.date)); }).forEach(function(x){
+      var tr=el("tr");
+      var td0=el("td");
+      var cb=el("input",{type:"checkbox"});
+      cb.checked=!!st.keep[x.key];
+      cb.addEventListener("change", function(){
+        if(cb.checked) st.keep[x.key]=true; else delete st.keep[x.key];
+        persistVat(); renderView();
+      });
+      td0.appendChild(cb); tr.appendChild(td0);
+      tr.appendChild(el("td",{class:"c", text:x.date}));
+      tr.appendChild(el("td",{},[el("span",{class:"tag b", text:(raw.sale.indexOf(x)>=0?"매출":"매입")})]));
+      tr.appendChild(el("td",{class:"mut", text:x.partner||"—"}));
+      tr.appendChild(el("td",{class:"mut", text:x.memo||"—"}));
+      tr.appendChild(el("td",{class:"n"+(x.tax<0?" neg":""), text:fmt0(x.tax)}));
+      tb5.appendChild(tr);
+    });
+    tab5.appendChild(tb5); tw5.appendChild(tab5); c5.appendChild(tw5);
+    c5.appendChild(el("div",{class:"note", text:
+      "부가세 계정이 정상과 반대쪽에 선 줄입니다. 지난 기수에 납부하거나 환급받은 금액을 계정에서 털어내는 전표로 보고 이번 신고에서 뺐습니다. 뺐기 때문에 지난 기수 환급액이 이번 기수 환급 예상액을 깎지 않습니다. 정리가 아니라 실제 거래였다면 「신고 포함」에 표시하세요."}));
+    wrap.appendChild(c5);
+  }
 
   /* 3. 홈택스 자료 */
   var c3=el("div",{class:"card", style:"margin-top:16px;"});
