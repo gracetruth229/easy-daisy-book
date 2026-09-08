@@ -139,6 +139,9 @@ select.mini{height:28px;padding:0 8px;border:1px solid var(--rule);border-radius
 .rcgrid .f label{font-size:11.5px;color:var(--ink-3);font-weight:500;}
 .rcgrid input,.rcgrid select{height:34px;padding:0 10px;border:1px solid var(--rule);
   border-radius:var(--r-in);background:var(--surface);color:var(--ink);font:inherit;font-size:13.5px;}
+textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--rule);
+  border-radius:var(--r-in);padding:9px 11px;width:100%;}
+textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(0,82,255,.14);}
 .rcgrid input.num{font-family:var(--f-m);text-align:right;font-variant-numeric:tabular-nums;width:170px;}
 .ldbar{display:flex;align-items:center;gap:9px;margin-bottom:13px;flex-wrap:wrap;}
 .ldbar .sp{flex:1;}
@@ -461,7 +464,7 @@ var VIEWS = [
   {k:"ledger",   t:"전표장",    ic:"M6 5.5h11M6 10h11M6 14.5h11M3 5.5h.01M3 10h.01M3 14.5h.01"},
   {k:"pivot",    t:"집계표",    ic:"M3 16.4h14M5.6 16.4V9.6M10 16.4V4.4M14.4 16.4v-4.6"},
   {k:"fs",       t:"재무제표",  ic:"M5 3h10v14H5zM8 7h4M8 10h4M8 13h2"},
-  {k:"recon",    t:"은행대사",  ic:"M3.5 7.5h13v8a1 1 0 01-1 1h-11a1 1 0 01-1-1zM3.5 7.5L10 3.5l6.5 4M7 12.2l2 2 4-4.2"},
+  {k:"recon",    t:"대사",  ic:"M3.5 7.5h13v8a1 1 0 01-1 1h-11a1 1 0 01-1-1zM3.5 7.5L10 3.5l6.5 4M7 12.2l2 2 4-4.2"},
   {k:"projects", t:"프로젝트",  ic:"M3.5 6.5h5l1.6 2h10.4v9a1.6 1.6 0 01-1.6 1.6H5.1A1.6 1.6 0 013.5 17.5z"},
   {k:"partners", t:"거래처",    ic:"M7 9.2a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2zM2.6 16.4c0-2.6 2-4.2 4.4-4.2s4.4 1.6 4.4 4.2M13.4 8.6a2.2 2.2 0 100-4.4M14.2 12.4c2 .3 3.2 1.8 3.2 4"},
   {k:"accounts", t:"계정과목",  ic:"M4 6h12M4 10h12M4 14h7"},
@@ -475,7 +478,9 @@ var S = {
   db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
   trash:[],
   lastType:"은행거래", ldTab:"book", ldFocus:"",
-  acct:"", recon:{}, rcAcct:"", rcDate:"", bsAsOf:"", bsCmp:""
+  acct:"", acctP:"", pvTab:"acct", apAcct:"", apPartner:"", apZero:false,
+  recon:{}, rcAcct:"", rcDate:"", rcTab:"bank",
+  vat:{}, vatQ:"", bsAsOf:"", bsCmp:""
 };
 
 /* ---------- 유틸 ---------- */
@@ -1466,11 +1471,16 @@ function counterName(v, l){
   if(others.length===1) return others[0].name||accName(others[0].code);
   return "제좌";
 }
-function accountRows(code, filter){
+function accountRows(code, filter, partner){
   var out=[];
   S.vouchers.filter(filter).forEach(function(v){
     (v.lines||[]).forEach(function(l, i){
       if(String(l.code)!==String(code)) return;
+      if(partner){
+        var p=String(l.partner||"").trim();
+        if(partner==="__none__"){ if(p) return; }
+        else if(p!==partner) return;
+      }
       out.push({v:v, l:l, i:i});
     });
   });
@@ -1480,7 +1490,7 @@ function accountRows(code, filter){
   return out;
 }
 function accountLedgerCard(code){
-  var dn=catOf(code).dn, rows=accountRows(code, upToPeriod);
+  var dn=catOf(code).dn, rows=accountRows(code, upToPeriod, S.acctP||"");
   var card=el("div",{class:"card", id:"acctCard", style:"margin-top:16px;"});
   var tdr=0, tcr=0;
   rows.forEach(function(r){ tdr+=(+r.l.dr||0); tcr+=(+r.l.cr||0); });
@@ -1489,10 +1499,11 @@ function accountLedgerCard(code){
   rgt.appendChild(el("span",{class:"tag b", text:(S.period==="all"?"전체 기간":S.period+" 까지")}));
   rgt.appendChild(el("span",{class:"tag g", text:"잔액 "+fmt0(bal)+"원"}));
   var xb=el("button",{class:"btn sm", text:"닫기"});
-  xb.addEventListener("click", function(){ S.acct=""; renderView(); });
+  xb.addEventListener("click", function(){ S.acct=""; S.acctP=""; renderView(); });
   rgt.appendChild(xb);
   card.appendChild(el("div",{class:"ch"},[
-    el("span",{text:"계정원장 · "+accName(code)+"  ("+String(code).slice(0,3)+")"}),
+    el("span",{text:"계정원장 · "+accName(code)+"  ("+String(code).slice(0,3)+")"
+      +(S.acctP ? "  ·  "+(S.acctP==="__none__"?"거래처 없음":S.acctP) : "")}),
     rgt
   ]));
   if(!rows.length){
@@ -1539,9 +1550,150 @@ function accountLedgerCard(code){
     +" 상대계정은 그 전표에서 반대편에 있던 계정이고, 여러 개면 「제좌」로 적습니다."}));
   return card;
 }
-function viewPivot(){
-
+/* ---------- 계정·거래처별 잔액 ---------- */
+function partnerBalances(filter){
+  var m={};
+  S.vouchers.filter(filter).forEach(function(v){
+    (v.lines||[]).forEach(function(l){
+      if(!l.code) return;
+      var p=String(l.partner||"").trim() || "(거래처 없음)";
+      if(!m[l.code]) m[l.code]={};
+      if(!m[l.code][p]) m[l.code][p]={dr:0, cr:0, n:0, last:""};
+      var x=m[l.code][p];
+      x.dr+=(+l.dr||0); x.cr+=(+l.cr||0); x.n++;
+      if((v.date||"")>x.last) x.last=v.date||"";
+    });
+  });
+  return m;
+}
+function viewAP(){
   var wrap=el("div");
+  var m=partnerBalances(upToPeriod);
+  var codes=Object.keys(m).sort();
+  if(!codes.length){
+    var c0=el("div",{class:"card"});
+    c0.appendChild(el("div",{class:"empty", html:"<b>집계할 전표가 없습니다</b>"}));
+    wrap.appendChild(c0); return wrap;
+  }
+  var pset={};
+  codes.forEach(function(c){ Object.keys(m[c]).forEach(function(p){ pset[p]=1; }); });
+  var plist=Object.keys(pset).sort(function(a,b){ return a.localeCompare(b,"ko"); });
+
+  /* 고르는 줄 */
+  var bar=el("div",{class:"ldbar"});
+  function pick(label, opts, cur, on){
+    bar.appendChild(el("span",{class:"lb2", style:"font-size:11.5px;color:var(--ink-3);", text:label}));
+    var sel=el("select",{class:"mini"});
+    opts.forEach(function(o){ sel.appendChild(el("option",{value:o[0], text:o[1]})); });
+    sel.value=cur;
+    sel.addEventListener("change", function(){ on(sel.value); });
+    bar.appendChild(sel);
+  }
+  pick("계정", [["","전체"]].concat(codes.map(function(c){ return [c, accName(c)+"  ("+c.slice(0,3)+")"]; })),
+       S.apAcct||"", function(v){ S.apAcct=v; renderView(); });
+  pick("거래처", [["","전체"]].concat(plist.map(function(p){ return [p,p]; })),
+       S.apPartner||"", function(v){ S.apPartner=v; renderView(); });
+  var zb=el("button",{class:"btn sm"+(S.apZero?"":" pri"), text:S.apZero?"잔액 0도 보임":"잔액 0은 숨김"});
+  zb.addEventListener("click", function(){ S.apZero=!S.apZero; renderView(); });
+  bar.appendChild(zb);
+  bar.appendChild(el("span",{class:"sp"}));
+  bar.appendChild(el("span",{class:"cntx", text:(S.period==="all"?"전체 기간":S.period+" 까지 누계")}));
+  wrap.appendChild(bar);
+
+  var card=el("div",{class:"card"});
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"계정·거래처별 잔액"}),
+    el("span",{class:"tag b", text:"거래처 "+plist.length+"곳"})
+  ]));
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:74px">코드</th><th style="width:180px">계정과목</th>'
+    +'<th style="width:170px">거래처</th><th class="n" style="width:70px">줄</th>'
+    +'<th style="width:100px">최근</th>'
+    +'<th class="n" style="width:126px">차변</th><th class="n" style="width:126px">대변</th>'
+    +'<th class="n" style="width:130px">잔액</th><th style="width:66px"></th></tr></thead>';
+  var tb=el("tbody"), rows=0, gdr=0, gcr=0;
+  codes.forEach(function(code){
+    if(S.apAcct && code!==S.apAcct) return;
+    var dn=catOf(code).dn;
+    var ps=Object.keys(m[code]).sort(function(a,b){
+      var ba=Math.abs(dn?(m[code][a].dr-m[code][a].cr):(m[code][a].cr-m[code][a].dr));
+      var bb=Math.abs(dn?(m[code][b].dr-m[code][b].cr):(m[code][b].cr-m[code][b].dr));
+      return bb-ba || a.localeCompare(b,"ko");
+    }).filter(function(p){
+      if(S.apPartner && p!==S.apPartner) return false;
+      if(S.apZero) return true;
+      var x=m[code][p];
+      return Math.abs(dn?(x.dr-x.cr):(x.cr-x.dr))>=0.5;
+    });
+    if(!ps.length) return;
+    var sdr=0, scr=0;
+    ps.forEach(function(p){ sdr+=m[code][p].dr; scr+=m[code][p].cr; });
+    var sbal=dn?(sdr-scr):(scr-sdr);
+    var htr=el("tr");
+    var htd=el("td",{colspan:"9", style:"background:var(--surface-2);padding:7px 12px;border-top:1px solid var(--rule);"});
+    var hb=el("div",{style:"display:flex;align-items:center;gap:10px;font-size:12.5px;"});
+    hb.appendChild(el("span",{class:"m", style:"color:var(--ink-3);", text:code.slice(0,3)}));
+    hb.appendChild(el("span",{style:"font-weight:700;", text:accName(code)}));
+    hb.appendChild(el("span",{class:"tag b", text:catOf(code).name}));
+    hb.appendChild(el("span",{class:"sp", style:"flex:1;"}));
+    hb.appendChild(el("span",{class:"m", style:"font-weight:700;"+(sbal<0?"color:var(--cr);":""), text:"잔액 "+fmt0(sbal)+"원"}));
+    htd.appendChild(hb); htr.appendChild(htd); tb.appendChild(htr);
+    ps.forEach(function(p){
+      var x=m[code][p], bal=dn?(x.dr-x.cr):(x.cr-x.dr);
+      rows++; gdr+=x.dr; gcr+=x.cr;
+      var tr=el("tr");
+      tr.appendChild(el("td",{class:"c", text:""}));
+      tr.appendChild(el("td",{class:"mut", text:""}));
+      var tdp=el("td");
+      if(p==="(거래처 없음)") tdp.appendChild(el("span",{class:"tag w", text:"거래처 없음"}));
+      else tdp.appendChild(el("span",{style:"font-weight:600;", text:p}));
+      tr.appendChild(tdp);
+      tr.appendChild(el("td",{class:"n mut", text:String(x.n)}));
+      tr.appendChild(el("td",{class:"c", text:x.last||"—"}));
+      tr.appendChild(el("td",{class:"n dr", text:fmt(x.dr)}));
+      tr.appendChild(el("td",{class:"n cr", text:fmt(x.cr)}));
+      tr.appendChild(el("td",{class:"n"+(bal<0?" neg":""), style:"font-weight:600;", text:fmt0(bal)}));
+      var ta=el("td");
+      var vb=el("button",{class:"btn sm", text:"내역"});
+      vb.addEventListener("click", function(){
+        S.acct=code; S.acctP=(p==="(거래처 없음)"?"__none__":p);
+        S.pvTab="acct"; renderView();
+        try{ document.getElementById("acctCard").scrollIntoView({behavior:"smooth", block:"start"}); }catch(e){}
+      });
+      ta.appendChild(vb); tr.appendChild(ta);
+      tb.appendChild(tr);
+    });
+  });
+  if(!rows){
+    card.appendChild(el("div",{class:"empty", html:"<b>조건에 맞는 잔액이 없습니다</b>「잔액 0도 보임」으로 바꾸거나 필터를 푸세요."}));
+    wrap.appendChild(card); return wrap;
+  }
+  var ftr=el("tr");
+  ftr.appendChild(el("td",{colspan:"5", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:"합계 · "+rows+"줄"}));
+  ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(gdr)}));
+  ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(gcr)}));
+  ftr.appendChild(el("td",{class:"n", style:"font-weight:600;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(gdr-gcr)}));
+  ftr.appendChild(el("td",{style:"background:var(--surface-3);border-top:1px solid var(--rule);"}));
+  tb.appendChild(ftr);
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  card.appendChild(el("div",{class:"note", text:
+    "계정마다 거래처별로 갈라 놓은 잔액입니다. 외상매출금·외상매입금·미지급금처럼 상대가 있는 계정에서 누가 얼마를 주고받아야 하는지 바로 보입니다. 「거래처 없음」은 전표에 거래처를 적지 않은 줄이므로, 채권·채무 계정에서 이 줄에 금액이 남아 있으면 채워 두시는 편이 좋습니다. 「내역」을 누르면 그 계정·거래처의 거래만 아래에 펼쳐집니다."}));
+  wrap.appendChild(card);
+  if(S.acct) wrap.appendChild(accountLedgerCard(S.acct));
+  return wrap;
+}
+function viewPivot(){
+  var wrap=el("div");
+  var tabs=el("div",{class:"ldbar"});
+  var seg=el("span",{class:"seg"});
+  [["acct","계정별"],["ap","계정·거래처별"]].forEach(function(p){
+    var b=el("button",{class:(S.pvTab===p[0]?"on":""), text:p[1]});
+    b.addEventListener("click", function(){ S.pvTab=p[0]; S.acct=""; S.acctP=""; renderView(); });
+    seg.appendChild(b);
+  });
+  tabs.appendChild(seg);
+  wrap.appendChild(tabs);
+  if(S.pvTab==="ap"){ wrap.appendChild(viewAP()); return wrap; }
   var m=tally(upToPeriod), keys=Object.keys(m).sort();
   if(!keys.length){
     var c0=el("div",{class:"card"});
@@ -1566,6 +1718,7 @@ function viewPivot(){
     var lnk=el("button",{class:"lnk", text:accName(k)});
     lnk.addEventListener("click", function(){
       S.acct = (S.acct===k) ? "" : k;
+      S.acctP="";
       renderView();
       if(S.acct){ try{ document.getElementById("acctCard").scrollIntoView({behavior:"smooth", block:"start"}); }catch(e){} }
     });
@@ -1609,7 +1762,419 @@ function reconOf(code){
   if(!S.recon[code].balances) S.recon[code].balances={};
   return S.recon[code];
 }
+/* ---------- 부가세 대사 ---------- */
+/* 불공제로 의심되는 계정 — 규칙이 아니라 확인 요청이다 */
+var NODEDUCT = [
+  {lo:8130000, hi:8139999, why:"접대비 (매입세액 불공제)"},
+  {lo:8220000, hi:8229999, why:"차량유지비 (비영업용 승용차면 불공제)"}
+];
+function vatAccounts(){
+  var out=[], inn=[];
+  S.accounts.forEach(function(a){
+    if(String(a.name||"").indexOf("부가세")<0) return;
+    var c=parseInt(a.code,10);
+    if(c>=2500000 && c<=2999999) out.push(a.code);
+    else if(c>=1000000 && c<=2499999) inn.push(a.code);
+  });
+  return {out:out, inn:inn};
+}
+function quarters(){
+  var set={};
+  S.vouchers.forEach(function(v){
+    var m=ym(v.date); if(!m) return;
+    set[m.slice(0,4)+"-Q"+Math.ceil(parseInt(m.slice(5,7),10)/3)]=1;
+  });
+  return Object.keys(set).sort();
+}
+function qRange(key){
+  var y=key.slice(0,4), q=parseInt(key.slice(6),10);
+  var lo=(q-1)*3+1, hi=q*3;
+  function p(n){ return (n<10?"0":"")+n; }
+  return {from:y+"-"+p(lo)+"-01", to:monthEnd(y+"-"+p(hi)),
+          label:y+"년 "+(q<=2?"1기":"2기")+" "+(q%2===1?"예정":"확정")+" · "+lo+"~"+hi+"월",
+          fin:(q%2===0)};
+}
+function noDeductHint(v){
+  var hit="";
+  (v.lines||[]).forEach(function(l){
+    var c=parseInt(l.code,10);
+    NODEDUCT.forEach(function(r){ if(!hit && c>=r.lo && c<=r.hi) hit=r.why; });
+  });
+  return hit;
+}
+/* 장부에서 세금계산서 목록을 뽑는다 */
+function bookTaxDocs(from, to){
+  var va=vatAccounts(), sale=[], buy=[], isOut={}, isIn={};
+  va.out.forEach(function(c){ isOut[c]=1; });
+  va.inn.forEach(function(c){ isIn[c]=1; });
+  function mk(v, l, tax, total){
+    var partner=l.partner||"", biz=l.bizno||"";
+    (v.lines||[]).forEach(function(x){
+      if(!partner && x.partner) partner=x.partner;
+      if(!biz && x.bizno) biz=x.bizno;
+    });
+    return {key:v.id+"#"+l.code, date:v.date||"", memo:l.memo||v.memo||"",
+            partner:partner, biz:bizDigits(biz), tax:tax,
+            supply:Math.round(total-tax), v:v, hint:noDeductHint(v)};
+  }
+  S.vouchers.forEach(function(v){
+    var d=String(v.date||"");
+    if(d<from || d>to) return;
+    var total=voucherAmount(v);
+    (v.lines||[]).forEach(function(l){
+      var dr=(+l.dr||0), cr=(+l.cr||0);
+      if(isOut[l.code]){ var t1=cr-dr; if(t1) sale.push(mk(v,l,t1,total)); }
+      else if(isIn[l.code]){ var t2=dr-cr; if(t2) buy.push(mk(v,l,t2,total)); }
+    });
+  });
+  function bydate(a,b){ return String(a.date).localeCompare(String(b.date)); }
+  sale.sort(bydate); buy.sort(bydate);
+  return {sale:sale, buy:buy};
+}
+/* 홈택스에서 복사해 온 줄을 읽는다 — 날짜·사업자번호·금액만 찾는다 */
+function parsePaste(text){
+  var rows=[];
+  String(text||"").split(/\r?\n/).forEach(function(ln){
+    if(!ln.trim()) return;
+    var cells = ln.indexOf("\t")>=0 ? ln.split("\t") : ln.split(",");
+    if(cells.length<2) cells = ln.trim().split(/\s{2,}/);
+    cells = cells.map(function(c){ return String(c).replace(/^"|"$/g,"").trim(); });
+    var date="", biz="", name="", nums=[];
+    cells.forEach(function(c){
+      var bare=c.replace(/\s/g,"");
+      var dg=bare.replace(/[^0-9]/g,"");
+      if(!date && /^\d{4}[-./]?\d{2}[-./]?\d{2}$/.test(bare) && dg.length===8){
+        date=dg.slice(0,4)+"-"+dg.slice(4,6)+"-"+dg.slice(6,8); return;
+      }
+      if(!biz && /^\d{3}-\d{2}-\d{5}$/.test(bare)){ biz=dg; return; }
+      var n=bare.replace(/[,원]/g,"");
+      if(/^-?\d+$/.test(n) && n.length<=11){
+        if(!biz && n.length===10 && rows.length>=0 && /^\d{10}$/.test(n) && !date){ }
+        nums.push(parseInt(n,10)); return;
+      }
+      if(!name && /[가-힣A-Za-z]/.test(c)) name=c;
+    });
+    if(!biz){
+      cells.forEach(function(c){
+        var bare=c.replace(/\s/g,"");
+        if(!biz && /^\d{10}$/.test(bare) && bizValid(bare)) biz=bare;
+      });
+    }
+    if(!date && !biz) return;
+    var supply=0, tax=0;
+    var pos=nums.filter(function(n){ return Math.abs(n)>=1; });
+    if(pos.length>=2){ supply=pos[pos.length-2]; tax=pos[pos.length-1]; }
+    else if(pos.length===1){ supply=pos[0]; tax=Math.round(pos[0]/10); }
+    if(!supply && !tax) return;
+    rows.push({date:date, biz:biz, name:name, supply:supply, tax:tax});
+  });
+  return rows;
+}
+function dayGap(a,b){
+  if(!a || !b) return 0;
+  var t1=Date.parse(a), t2=Date.parse(b);
+  if(isNaN(t1) || isNaN(t2)) return 0;
+  return Math.abs(t1-t2)/86400000;
+}
+function matchDocs(book, tax){
+  var used={}, taken={}, ok=[], diff=[], onlyBook=[];
+  function compat(b, h){
+    if(b.biz && h.biz){ if(b.biz!==h.biz) return false; }
+    else if(b.partner && h.name){ if(b.partner!==h.name) return false; }
+    else return false;
+    return dayGap(b.date, h.date)<=10;
+  }
+  /* 1차 — 세액까지 같은 짝을 먼저 붙인다 */
+  book.forEach(function(b, bi){
+    for(var i=0;i<tax.length;i++){
+      if(used[i]) continue;
+      if(!compat(b, tax[i])) continue;
+      if(Math.abs((+tax[i].tax||0)-(+b.tax||0))>=1) continue;
+      used[i]=1; taken[bi]=1; ok.push({b:b, h:tax[i]}); return;
+    }
+  });
+  /* 2차 — 거래처와 날짜는 맞는데 세액이 다른 것 */
+  book.forEach(function(b, bi){
+    if(taken[bi]) return;
+    for(var i=0;i<tax.length;i++){
+      if(used[i]) continue;
+      if(!compat(b, tax[i])) continue;
+      used[i]=1; taken[bi]=1; diff.push({b:b, h:tax[i]}); return;
+    }
+    onlyBook.push(b);
+  });
+  var onlyTax=[];
+  tax.forEach(function(h, i){ if(!used[i]) onlyTax.push(h); });
+  return {ok:ok, diff:diff, onlyBook:onlyBook, onlyTax:onlyTax};
+}
+function vatOf(key){
+  if(!S.vat) S.vat={};
+  if(!S.vat[key]) S.vat[key]={saleText:"", buyText:"", nod:{}, prepaid:0, ecredit:true};
+  var o=S.vat[key];
+  if(!o.nod) o.nod={};
+  return o;
+}
+function sumTax(list){ var t=0; list.forEach(function(x){ t+=(+x.tax||0); }); return t; }
+function sumSupply(list){ var t=0; list.forEach(function(x){ t+=(+x.supply||0); }); return t; }
+
+function viewVat(){
+  var wrap=el("div");
+  var va=vatAccounts();
+  if(!va.out.length && !va.inn.length){
+    var c0=el("div",{class:"card"});
+    c0.appendChild(el("div",{class:"empty", html:"<b>부가세 계정이 없습니다</b>계정과목에 「예수부가세」(매출세액)와 「선급부가세」(매입세액)를 먼저 만들어 주세요."}));
+    wrap.appendChild(c0); return wrap;
+  }
+  var qs=quarters();
+  if(!qs.length){
+    var c1=el("div",{class:"card"});
+    c1.appendChild(el("div",{class:"empty", html:"<b>전표가 없습니다</b>전표를 넣으면 과세기간이 생깁니다."}));
+    wrap.appendChild(c1); return wrap;
+  }
+  if(qs.indexOf(S.vatQ)<0) S.vatQ=qs[qs.length-1];
+  var R=qRange(S.vatQ), st=vatOf(S.vatQ);
+  var book=bookTaxDocs(R.from, R.to);
+  var htSale=parsePaste(st.saleText), htBuy=parsePaste(st.buyText);
+  var mSale=matchDocs(book.sale, htSale), mBuy=matchDocs(book.buy, htBuy);
+
+  /* 세액 계산 */
+  var outTax=sumTax(book.sale), inTax=sumTax(book.buy);
+  var nodTax=0;
+  book.buy.forEach(function(b){ if(st.nod[b.key]) nodTax+=(+b.tax||0); });
+  var deduct=inTax-nodTax;
+  var ecr=(R.fin && st.ecredit) ? 10000 : 0;
+  var pre=(+st.prepaid||0);
+  var due=outTax-deduct-ecr-pre;
+
+  /* 1. 기간 */
+  var card=el("div",{class:"card"});
+  var rgt=el("span",{class:"r"});
+  var sel=el("select",{class:"mini"});
+  qs.forEach(function(k){ sel.appendChild(el("option",{value:k, text:qRange(k).label})); });
+  sel.value=S.vatQ;
+  sel.addEventListener("change", function(){ S.vatQ=sel.value; renderView(); });
+  rgt.appendChild(el("span",{class:"lb2", text:"과세기간"}));
+  rgt.appendChild(sel);
+  card.appendChild(el("div",{class:"ch"},[el("span",{text:"장부 기준 세금계산서"}), rgt]));
+  var sum=el("div",{class:"rcsum"});
+  function tile(k, v, cls){
+    var d=el("div");
+    d.appendChild(el("dt",{text:k}));
+    d.appendChild(el("dd",{class:cls||"", text:v}));
+    sum.appendChild(d);
+  }
+  tile("매출 "+book.sale.length+"건 · 공급가액", fmt0(sumSupply(book.sale))+"원");
+  tile("매출세액", fmt0(outTax)+"원");
+  tile("매입 "+book.buy.length+"건 · 공급가액", fmt0(sumSupply(book.buy))+"원");
+  tile("매입세액", fmt0(inTax)+"원");
+  card.appendChild(sum);
+  card.appendChild(el("div",{class:"note", text:
+    R.from+" ~ "+R.to+" 사이 전표에서 「예수부가세」가 붙은 줄을 매출로, 「선급부가세」가 붙은 줄을 매입으로 모았습니다. 공급가액은 전표 총액에서 세액을 뺀 값입니다."}));
+  wrap.appendChild(card);
+
+  /* 2. 예상 납부·환급 */
+  var c2=el("div",{class:"card", style:"margin-top:16px;"});
+  c2.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"예상 "+(due>=0?"납부":"환급")+"세액"}),
+    el("span",{class:"tag w", text:"추정치입니다 · 실제 신고는 세무사가 합니다"})
+  ]));
+  var big=el("div",{style:"padding:16px 15px 4px;font-family:var(--f-m);font-size:34px;font-weight:700;letter-spacing:-.02em;"
+    +"color:"+(due>=0?"var(--cr)":"var(--accent-deep)")+";"});
+  big.textContent=fmt0(Math.abs(due))+"원 "+(due>=0?"납부":"환급");
+  c2.appendChild(big);
+  var tw2=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tab2=el("table");
+  var tb2=el("tbody");
+  function line(label, val, sign, note){
+    var tr=el("tr");
+    tr.appendChild(el("td",{style:"width:230px;", text:label}));
+    tr.appendChild(el("td",{class:"n"+(val<0?" neg":""), text:(sign||"")+fmt0(val)}));
+    tr.appendChild(el("td",{class:"mut", text:note||""}));
+    tb2.appendChild(tr);
+  }
+  line("매출세액", outTax, "");
+  line("매입세액", inTax, "− ");
+  if(nodTax) line("불공제로 표시한 매입세액", nodTax, "+ ", "아래 목록에서 표시한 건");
+  if(R.fin) {
+    var trE=el("tr");
+    trE.appendChild(el("td",{text:"전자신고세액공제"}));
+    trE.appendChild(el("td",{class:"n", text:"− "+fmt0(ecr)}));
+    var tdE=el("td");
+    var cbE=el("input",{type:"checkbox"});
+    cbE.checked=!!st.ecredit;
+    cbE.addEventListener("change", function(){ st.ecredit=cbE.checked; persistVat(); renderView(); });
+    var lbE=el("label",{style:"display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-3);"});
+    lbE.appendChild(cbE); lbE.appendChild(el("span",{text:"확정신고 시 1만원"}));
+    tdE.appendChild(lbE); trE.appendChild(tdE);
+    tb2.appendChild(trE);
+  }
+  var trP=el("tr");
+  trP.appendChild(el("td",{text:"기납부세액 (예정고지·예정신고)"}));
+  trP.appendChild(el("td",{class:"n", text:"− "+fmt0(pre)}));
+  var tdP=el("td");
+  var iP=el("input",{type:"number", step:"1", value:pre||"", placeholder:"0",
+                     style:"width:150px;text-align:right;font-family:var(--f-m);"});
+  iP.addEventListener("change", function(){ st.prepaid=+iP.value||0; persistVat(); renderView(); });
+  tdP.appendChild(iP); trP.appendChild(tdP);
+  tb2.appendChild(trP);
+  var trT=el("tr");
+  trT.appendChild(el("td",{style:"font-weight:700;background:var(--surface-3);border-top:1px solid var(--rule);", text:(due>=0?"납부할 세액":"돌려받을 세액")}));
+  trT.appendChild(el("td",{class:"n", style:"font-weight:700;background:var(--surface-3);border-top:1px solid var(--rule);", text:fmt0(Math.abs(due))}));
+  trT.appendChild(el("td",{style:"background:var(--surface-3);border-top:1px solid var(--rule);"}));
+  tb2.appendChild(trT);
+  tab2.appendChild(tb2); tw2.appendChild(tab2); c2.appendChild(tw2);
+
+  /* 불공제 확인 */
+  var nods=book.buy.filter(function(b){ return b.hint; });
+  if(nods.length){
+    var nb=el("div",{class:"banner w", style:"margin:13px 15px;"});
+    nb.innerHTML = svg("M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",17)
+      + "<span><b>매입세액 중 "+nods.length+"건은 공제받지 못할 수 있습니다.</b> 아래에서 해당하는 건에 표시하면 납부세액에 반영됩니다.</span>";
+    c2.appendChild(nb);
+    var tw3=el("div",{class:"tw", style:"margin:0 15px 15px;"}), tab3=el("table");
+    tab3.innerHTML='<thead><tr><th style="width:56px">불공제</th><th style="width:96px">작성일</th>'
+      +'<th style="width:130px">거래처</th><th>적요</th><th style="width:190px">이유</th>'
+      +'<th class="n" style="width:110px">세액</th></tr></thead>';
+    var tb3=el("tbody");
+    nods.forEach(function(b){
+      var tr=el("tr");
+      var td0=el("td");
+      var cb=el("input",{type:"checkbox"});
+      cb.checked=!!st.nod[b.key];
+      cb.addEventListener("change", function(){
+        if(cb.checked) st.nod[b.key]=true; else delete st.nod[b.key];
+        persistVat(); renderView();
+      });
+      td0.appendChild(cb); tr.appendChild(td0);
+      tr.appendChild(el("td",{class:"c", text:b.date}));
+      tr.appendChild(el("td",{class:"mut", text:b.partner||"—"}));
+      tr.appendChild(el("td",{class:"mut", text:b.memo||"—"}));
+      tr.appendChild(el("td",{class:"mut", text:b.hint}));
+      tr.appendChild(el("td",{class:"n", text:fmt0(b.tax)}));
+      tb3.appendChild(tr);
+    });
+    tab3.appendChild(tb3); tw3.appendChild(tab3); c2.appendChild(tw3);
+  }
+  c2.appendChild(el("div",{class:"note", text:
+    "매출세액에서 매입세액을 뺀 값입니다. 접대비·비영업용 승용차·면세사업 관련 매입세액은 공제되지 않으므로, 위에서 표시하지 않으면 실제 납부세액보다 적게 나옵니다. 신용카드매출전표 발행세액공제나 의제매입세액 같은 항목은 넣지 않았습니다."}));
+  wrap.appendChild(c2);
+
+  /* 3. 홈택스 자료 */
+  var c3=el("div",{class:"card", style:"margin-top:16px;"});
+  c3.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"홈택스 자료 붙여넣기"}),
+    el("span",{class:"tag b", text:"매출 "+htSale.length+"건 · 매입 "+htBuy.length+"건을 읽었습니다"})
+  ]));
+  var pg=el("div",{style:"display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:14px 15px;"});
+  [["매출 세금계산서 (발급한 것)","saleText"],["매입 세금계산서 (받은 것)","buyText"]].forEach(function(pair){
+    var box=el("div",{class:"f"});
+    box.appendChild(el("label",{text:pair[0]}));
+    var ta=el("textarea",{rows:"7", placeholder:"홈택스 > 전자세금계산서 > 목록조회 화면을 긁어서 붙여넣으세요.\n엑셀에서 복사한 것도 됩니다.",
+      style:"width:100%;height:auto;padding:9px 11px;font-size:12.5px;line-height:1.5;resize:vertical;"});
+    ta.value=st[pair[1]]||"";
+    ta.addEventListener("change", function(){ st[pair[1]]=ta.value; persistVat(); renderView(); });
+    box.appendChild(ta);
+    pg.appendChild(box);
+  });
+  c3.appendChild(pg);
+  c3.appendChild(el("div",{class:"note", text:
+    "줄마다 작성일자·사업자등록번호·공급가액·세액만 찾아 읽습니다. 열 순서가 달라도 되고, 필요 없는 열이 섞여 있어도 됩니다. 사업자등록번호와 세액이 같으면 같은 건으로 봅니다(작성일 10일 이내)."}));
+  wrap.appendChild(c3);
+
+  /* 4. 대사 결과 */
+  if(htSale.length || htBuy.length){
+    [["매출", mSale, htSale], ["매입", mBuy, htBuy]].forEach(function(pair){
+      var nm=pair[0], m=pair[1], ht=pair[2];
+      if(!ht.length) return;
+      var okAll = !m.onlyBook.length && !m.onlyTax.length && !m.diff.length;
+      var c4=el("div",{class:"card", style:"margin-top:16px;"});
+      c4.appendChild(el("div",{class:"ch"},[
+        el("span",{text:nm+" 대사 결과"}),
+        el("span",{class:"tag "+(okAll?"g":"c"), text: okAll ? "전부 일치" :
+          ("맞은 것 "+m.ok.length+"건 · 확인할 것 "+(m.onlyBook.length+m.onlyTax.length+m.diff.length)+"건")})
+      ]));
+      var bar=el("div",{class:"rcsum"});
+      function t2(k,v,cls){
+        var d=el("div");
+        d.appendChild(el("dt",{text:k}));
+        d.appendChild(el("dd",{class:cls||"", text:v}));
+        bar.appendChild(d);
+      }
+      t2("장부 세액", fmt0(sumTax(nm==="매출"?book.sale:book.buy))+"원");
+      t2("홈택스 세액", fmt0(sumTax(ht))+"원");
+      var gap=sumTax(ht)-sumTax(nm==="매출"?book.sale:book.buy);
+      t2("차이", fmt0(gap)+"원", Math.abs(gap)<1?"ok":"neg");
+      c4.appendChild(bar);
+      function block(title, rows, cls, cols){
+        if(!rows.length) return;
+        c4.appendChild(el("div",{class:"ch", style:"border-top:1px solid var(--rule);"},[
+          el("span",{text:title}), el("span",{class:"tag "+cls, text:rows.length+"건"})
+        ]));
+        var tw=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tab=el("table");
+        tab.innerHTML='<thead><tr><th style="width:96px">작성일</th><th style="width:150px">거래처</th>'
+          +'<th style="width:130px">사업자번호</th><th>적요</th>'
+          +'<th class="n" style="width:110px">공급가액</th><th class="n" style="width:100px">세액</th></tr></thead>';
+        var tb=el("tbody");
+        rows.forEach(function(r){
+          var tr=el("tr");
+          tr.appendChild(el("td",{class:"c", text:r.date||"—"}));
+          tr.appendChild(el("td",{class:"mut", text:r.partner||r.name||"—"}));
+          tr.appendChild(el("td",{class:"c", text:r.biz?bizFormat(r.biz):"—"}));
+          tr.appendChild(el("td",{class:"mut", text:r.memo||""}));
+          tr.appendChild(el("td",{class:"n", text:fmt0(r.supply)}));
+          tr.appendChild(el("td",{class:"n", text:fmt0(r.tax)}));
+          tb.appendChild(tr);
+        });
+        tab.appendChild(tb); tw.appendChild(tab); c4.appendChild(tw);
+      }
+      block("홈택스에는 있는데 장부에 없습니다 — 전표를 빠뜨린 것입니다", m.onlyTax, "c");
+      block("장부에는 있는데 홈택스에 없습니다 — 계산서가 발급·수취되지 않았거나 자료를 덜 가져온 것입니다", m.onlyBook, "w");
+      if(m.diff.length){
+        c4.appendChild(el("div",{class:"ch", style:"border-top:1px solid var(--rule);"},[
+          el("span",{text:"같은 거래처인데 세액이 다릅니다"}),
+          el("span",{class:"tag c", text:m.diff.length+"건"})
+        ]));
+        var twD=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tabD=el("table");
+        tabD.innerHTML='<thead><tr><th style="width:96px">작성일</th><th style="width:150px">거래처</th>'
+          +'<th class="n" style="width:110px">장부 세액</th><th class="n" style="width:110px">홈택스 세액</th>'
+          +'<th class="n" style="width:100px">차이</th><th>적요</th></tr></thead>';
+        var tbD=el("tbody");
+        m.diff.forEach(function(x){
+          var tr=el("tr");
+          tr.appendChild(el("td",{class:"c", text:x.b.date}));
+          tr.appendChild(el("td",{class:"mut", text:x.b.partner||x.h.name||"—"}));
+          tr.appendChild(el("td",{class:"n", text:fmt0(x.b.tax)}));
+          tr.appendChild(el("td",{class:"n", text:fmt0(x.h.tax)}));
+          tr.appendChild(el("td",{class:"n neg", text:fmt0((+x.h.tax||0)-(+x.b.tax||0))}));
+          tr.appendChild(el("td",{class:"mut", text:x.b.memo||""}));
+          tbD.appendChild(tr);
+        });
+        tabD.appendChild(tbD); twD.appendChild(tabD); c4.appendChild(twD);
+      }
+      if(okAll){
+        c4.appendChild(el("div",{class:"chkbar ok", html:
+          svg("M4 10.4l4 4 8-9",15)+"<span>장부와 홈택스가 건별로 모두 맞습니다</span>"}));
+      }
+      wrap.appendChild(c4);
+    });
+  }
+  return wrap;
+}
+
 function viewRecon(){
+  var wrap=el("div");
+  var tabs=el("div",{class:"ldbar"});
+  var seg=el("span",{class:"seg"});
+  [["bank","은행 대사"],["vat","부가세 대사"]].forEach(function(p){
+    var b=el("button",{class:(S.rcTab===p[0]?"on":""), text:p[1]});
+    b.addEventListener("click", function(){ S.rcTab=p[0]; renderView(); });
+    seg.appendChild(b);
+  });
+  tabs.appendChild(seg);
+  wrap.appendChild(tabs);
+  wrap.appendChild(S.rcTab==="vat" ? viewVat() : viewBankRecon());
+  return wrap;
+}
+function viewBankRecon(){
   var wrap=el("div");
   var cash=cashAccounts();
   if(!cash.length){
@@ -2305,6 +2870,19 @@ function rowsDouzone(){
     });
   return out;
 }
+function rowsAP(){
+  var m=partnerBalances(upToPeriod);
+  var out=[["계정코드","더존코드","계정과목","구분","거래처","줄수","최근거래일","차변","대변","잔액"]];
+  Object.keys(m).sort().forEach(function(code){
+    var dn=catOf(code).dn;
+    Object.keys(m[code]).sort(function(a,b){ return a.localeCompare(b,"ko"); }).forEach(function(p){
+      var x=m[code][p];
+      out.push([code, code.slice(0,3), accName(code), catOf(code).name,
+                p==="(거래처 없음)"?"":p, x.n, x.last, x.dr, x.cr, dn?(x.dr-x.cr):(x.cr-x.dr)]);
+    });
+  });
+  return out;
+}
 function rowsPivot(){
   var m=tally(upToPeriod), out=[["계정코드","더존코드","계정과목","구분","차변합계","대변합계","잔액"]];
   Object.keys(m).sort().forEach(function(k){
@@ -2500,6 +3078,7 @@ function viewExport(){
       var x=buildXlsx([
         {name:"전표", rows:rowsVouchers()},
         {name:"집계표", rows:rowsPivot()},
+        {name:"계정거래처별", rows:rowsAP()},
         {name:"BS", rows:rowsBS()},
         {name:"PL", rows:rowsPL()},
         {name:"프로젝트", rows:rowsProjects()},
@@ -2520,6 +3099,9 @@ function viewExport(){
   grid.appendChild(xcard("거래처 CSV",
     "등록된 거래처와 사업자번호, 사용 횟수입니다. 세무사에게 거래처 목록을 넘기실 때 쓰세요.",
     "csv 내려받기", function(){ saveFile("거래처_"+tag()+".csv", csvOf(rowsPartners())); }));
+  grid.appendChild(xcard("계정·거래처별 잔액 CSV",
+    "계정마다 거래처별로 갈라 놓은 차변·대변·잔액입니다. 채권·채무를 누가 얼마 남겼는지 확인할 때 씁니다.",
+    "csv 내려받기", function(){ saveFile("계정거래처별잔액_"+tag()+".csv", csvOf(rowsAP())); }));
   grid.appendChild(xcard("집계표 CSV",
     "계정별 차변·대변 합계와 잔액입니다.",
     "csv 내려받기", function(){ saveFile("집계표_"+tag()+".csv", csvOf(rowsPivot())); }));
@@ -2575,6 +3157,7 @@ function applySeed(seed){
   S.partners = Array.isArray(seed.partners) ? seed.partners.slice() : [];
   S.projects = Array.isArray(seed.projects) ? seed.projects.slice() : [];
   S.recon = (seed.recon && typeof seed.recon==="object") ? seed.recon : {};
+  S.vat = (seed.vat && typeof seed.vat==="object") ? seed.vat : {};
   splitVouchers((Array.isArray(seed.vouchers)?seed.vouchers:[]).concat(Array.isArray(seed.trash)?seed.trash:[]));
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
@@ -2587,7 +3170,7 @@ function saveAll(){
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
       partners:S.partners, projects:S.projects, vouchers:S.vouchers, trash:S.trash,
-      recon:S.recon||{}, seedStamp:S.seedStamp||"",
+      recon:S.recon||{}, vat:S.vat||{}, seedStamp:S.seedStamp||"",
       savedAt:new Date().toISOString()
     }));
     S.dbState="이 브라우저에 저장됨";
@@ -2603,7 +3186,7 @@ function loadAll(){
 
   if(!raw){
     if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.firstRun=true;
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
   }
@@ -2615,10 +3198,11 @@ function loadAll(){
     S.projects=Array.isArray(d.projects)?d.projects.slice():[];
     splitVouchers((Array.isArray(d.vouchers)?d.vouchers:[]).concat(Array.isArray(d.trash)?d.trash:[]));
     S.recon=(d.recon && typeof d.recon==="object")?d.recon:{};
+    S.vat=(d.vat && typeof d.vat==="object")?d.vat:{};
     S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={};
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={};
     S.dbState="저장된 자료를 읽지 못했습니다";
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
@@ -2654,6 +3238,7 @@ function persistPartners(){
 }
 function persistAccounts(){ saveAll(); }
 function persistRecon(){ saveAll(); }
+function persistVat(){ saveAll(); }
 function persistVoucher(id, doc){
   putLocal(id, doc);
   S.firstRun=false; saveAll();
@@ -2662,7 +3247,7 @@ function backupJson(){
   return JSON.stringify({
     app:"gongan-ledger", version:1, exportedAt:new Date().toISOString(),
     company:S.co, accounts:S.accounts, partners:S.partners, projects:S.projects,
-    recon:S.recon||{}, vouchers:S.vouchers, trash:S.trash
+    recon:S.recon||{}, vat:S.vat||{}, vouchers:S.vouchers, trash:S.trash
   }, null, 1);
 }
 function restoreJson(text){
@@ -2714,13 +3299,13 @@ function pickBackup(){
 /* ---------- 렌더 ---------- */
 function renderView(){
   var v=$("#view"); v.innerHTML="";
-  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"은행대사", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
+  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"대사", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
   var subs={
     entry:"대차가 맞을 때만 저장됩니다 · 저장 후에는 역분개로만 바로잡습니다",
     ledger:"삭제해도 기록은 지워지지 않습니다 · 「삭제이력」에서 되살릴 수 있습니다",
-    pivot:"계정을 누르면 그 계정의 거래 내역과 잔액이 펼쳐집니다",
+    pivot:"계정별 합계와, 계정마다 거래처별로 갈라 놓은 잔액입니다",
     fs:"집계표에서 자동으로 만들어집니다 · 재무상태표는 원하는 시점을 고르실 수 있습니다",
-    recon:"통장에 찍힌 잔액과 장부 잔액을 맞춰 봅니다 · 전표는 건드리지 않습니다",
+    recon:"통장·홈택스 자료와 장부를 맞춰 봅니다 · 전표는 건드리지 않습니다",
     projects:"전표 줄마다 프로젝트를 달면 여기서 프로젝트별로 얼마인지 보입니다",
     partners:"등록해 두면 전표에서 이름만 골라도 사업자번호가 따라옵니다",
     accounts:"코드 앞 3자리가 더존 표준코드입니다",
