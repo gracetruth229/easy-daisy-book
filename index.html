@@ -1930,15 +1930,60 @@ function matchDocs(book, tax){
 }
 function vatOf(key){
   if(!S.vat) S.vat={};
-  if(!S.vat[key]) S.vat[key]={saleText:"", buyText:"", nod:{}, keep:{}, prepaid:0, ecredit:true};
+  if(!S.vat[key]) S.vat[key]={saleText:"", buyText:"", nod:{}, keep:{}, okd:{}, prepaid:0, ecredit:true};
   var o=S.vat[key];
   if(!o.nod) o.nod={};
   if(!o.keep) o.keep={};
+  if(!o.okd) o.okd={};
   return o;
 }
 function sumTax(list){ var t=0; list.forEach(function(x){ t+=(+x.tax||0); }); return t; }
 function sumSupply(list){ var t=0; list.forEach(function(x){ t+=(+x.supply||0); }); return t; }
 
+/* 대사가 안 맞아도 정상인 흔한 경우 */
+var OKWHY = [
+  {t:"신용카드로 결제 — 세금계산서가 아님", ded:true},
+  {t:"현금영수증 매입", ded:true},
+  {t:"해외 결제 — 세금계산서 없음", ded:false},
+  {t:"간이영수증·계산서 없는 매입", ded:false},
+  {t:"홈택스 자료를 이 건까지 가져오지 않음", ded:true},
+  {t:"거래처 이름·사업자번호가 달라 못 붙은 것", ded:true},
+  {t:"다음 기수 신고분", ded:true}
+];
+function askWhy(){
+  var msg = "왜 맞아도 되는지 고르세요." + "\n\n";
+  OKWHY.forEach(function(r,i){ msg += (i+1) + ". " + r.t + "\n"; });
+  msg += "\n" + "번호를 넣거나, 다른 이유를 직접 쓰세요.";
+  var a = prompt(msg, "1");
+  if(a===null) return null;
+  a = String(a).trim();
+  if(!a) return null;
+  var n = parseInt(a,10);
+  if(n>=1 && n<=OKWHY.length && String(n)===a) return OKWHY[n-1];
+  return {t:a, ded:true};
+}
+function htKey(kind, h){
+  return "HT|"+kind+"|"+(h.date||"")+"|"+(h.biz||h.name||"")+"|"+(h.tax||0);
+}
+/* 홈택스 줄 하나로 전표를 채워 준다 */
+function draftFromHometax(h, kind){
+  if(!leaveEdit("entry")) return;
+  var va=vatAccounts();
+  var vatCode = (kind==="매입" ? va.inn[0] : va.out[0]) || "";
+  var sup=(+h.supply||0), tax=(+h.tax||0), total=sup+tax;
+  var who=h.name||"", biz=h.biz?bizFormat(h.biz):"";
+  function ln(code, memo, dr, cr){
+    return {code:code, project:"", partner:who, bizno:biz, memo:memo, dr:dr, cr:cr};
+  }
+  var lines = (kind==="매입")
+    ? [ln("", "", sup, ""), ln(vatCode, "매입세액", tax, ""), ln("", "", "", total)]
+    : [ln("", "", total, ""), ln("", "", "", sup), ln(vatCode, "매출세액", "", tax)];
+  S.editId=null;
+  S.draft={date:h.date||todayISO(), type:"외상거래",
+           memo:(who?who+" ":"")+kind+" 세금계산서", lines:lines};
+  S.view="entry"; render();
+  toast("홈택스 자료로 채웠습니다 — 계정과목만 고르시면 됩니다");
+}
 function viewVat(){
   var wrap=el("div");
   var va=vatAccounts();
@@ -2058,7 +2103,7 @@ function viewVat(){
   tab2.appendChild(tb2); tw2.appendChild(tab2); c2.appendChild(tw2);
 
   /* 불공제 확인 */
-  var nods=book.buy.filter(function(b){ return b.hint; });
+  var nods=book.buy.filter(function(b){ return b.hint || st.nod[b.key]; });
   if(nods.length){
     var nb=el("div",{class:"banner w", style:"margin:13px 15px;"});
     nb.innerHTML = svg("M10 3.6l7 12.4H3l7-12.4zM10 8.4v3M10 13.6h.01",17)
@@ -2157,12 +2202,23 @@ function viewVat(){
     [["매출", mSale, htSale], ["매입", mBuy, htBuy]].forEach(function(pair){
       var nm=pair[0], m=pair[1], ht=pair[2];
       if(!ht.length) return;
-      var okAll = !m.onlyBook.length && !m.onlyTax.length && !m.diff.length;
+
+      function keyOf(r, side){ return side==="ht" ? htKey(nm, r) : r.key; }
+      function isOk(r, side){ return !!st.okd[keyOf(r, side)]; }
+      var todo=0, done=0;
+      [[m.onlyTax,"ht"],[m.onlyBook,"bk"]].forEach(function(g){
+        g[0].forEach(function(r){ if(isOk(r,g[1])) done++; else todo++; });
+      });
+      m.diff.forEach(function(x){ if(isOk(x.b,"bk")) done++; else todo++; });
+      var clean=(todo===0);
+
       var c4=el("div",{class:"card", style:"margin-top:16px;"});
       c4.appendChild(el("div",{class:"ch"},[
         el("span",{text:nm+" 대사 결과"}),
-        el("span",{class:"tag "+(okAll?"g":"c"), text: okAll ? "전부 일치" :
-          ("맞은 것 "+m.ok.length+"건 · 확인할 것 "+(m.onlyBook.length+m.onlyTax.length+m.diff.length)+"건")})
+        el("span",{class:"tag "+(clean?"g":"c"), text:
+          "맞은 것 "+m.ok.length+"건"
+          + (done?" · 확인함 "+done+"건":"")
+          + (todo?" · 확인할 것 "+todo+"건":"")})
       ]));
       var bar=el("div",{class:"rcsum"});
       function t2(k,v,cls){
@@ -2171,61 +2227,104 @@ function viewVat(){
         d.appendChild(el("dd",{class:cls||"", text:v}));
         bar.appendChild(d);
       }
-      t2("장부 세액", fmt0(sumTax(nm==="매출"?book.sale:book.buy))+"원");
+      var bookList=(nm==="매출"?book.sale:book.buy);
+      t2("장부 세액", fmt0(sumTax(bookList))+"원");
       t2("홈택스 세액", fmt0(sumTax(ht))+"원");
-      var gap=sumTax(ht)-sumTax(nm==="매출"?book.sale:book.buy);
+      var gap=sumTax(ht)-sumTax(bookList);
       t2("차이", fmt0(gap)+"원", Math.abs(gap)<1?"ok":"neg");
       c4.appendChild(bar);
-      function block(title, rows, cls, cols){
-        if(!rows.length) return;
-        c4.appendChild(el("div",{class:"ch", style:"border-top:1px solid var(--rule);"},[
-          el("span",{text:title}), el("span",{class:"tag "+cls, text:rows.length+"건"})
-        ]));
+
+      function table(rows, side, extraCol){
         var tw=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tab=el("table");
-        tab.innerHTML='<thead><tr><th style="width:96px">작성일</th><th style="width:150px">거래처</th>'
-          +'<th style="width:130px">사업자번호</th><th>적요</th>'
-          +'<th class="n" style="width:110px">공급가액</th><th class="n" style="width:100px">세액</th></tr></thead>';
+        tab.innerHTML='<thead><tr><th style="width:96px">작성일</th><th style="width:140px">거래처</th>'
+          +'<th style="width:126px">사업자번호</th><th>'+(extraCol||"적요")+'</th>'
+          +'<th class="n" style="width:104px">공급가액</th><th class="n" style="width:96px">세액</th>'
+          +'<th style="width:196px"></th></tr></thead>';
         var tb=el("tbody");
         rows.forEach(function(r){
+          var row = r.b ? r.b : r;
           var tr=el("tr");
-          tr.appendChild(el("td",{class:"c", text:r.date||"—"}));
-          tr.appendChild(el("td",{class:"mut", text:r.partner||r.name||"—"}));
-          tr.appendChild(el("td",{class:"c", text:r.biz?bizFormat(r.biz):"—"}));
-          tr.appendChild(el("td",{class:"mut", text:r.memo||""}));
-          tr.appendChild(el("td",{class:"n", text:fmt0(r.supply)}));
-          tr.appendChild(el("td",{class:"n", text:fmt0(r.tax)}));
+          tr.appendChild(el("td",{class:"c", text:row.date||"—"}));
+          tr.appendChild(el("td",{class:"mut", text:row.partner||row.name||"—"}));
+          tr.appendChild(el("td",{class:"c", text:row.biz?bizFormat(row.biz):"—"}));
+          if(r.b){
+            var tdD=el("td",{class:"mut"});
+            tdD.appendChild(el("span",{text:"장부 "+fmt0(r.b.tax)+" · 홈택스 "+fmt0(r.h.tax)+" · 차이 "}));
+            tdD.appendChild(el("span",{class:"neg", text:fmt0((+r.h.tax||0)-(+r.b.tax||0))}));
+            tr.appendChild(tdD);
+          } else {
+            tr.appendChild(el("td",{class:"mut", text:row.memo||""}));
+          }
+          tr.appendChild(el("td",{class:"n", text:fmt0(row.supply)}));
+          tr.appendChild(el("td",{class:"n", text:fmt0(row.tax)}));
+
+          var ta=el("td");
+          var k=keyOf(row, side), okv=st.okd[k];
+          if(okv){
+            ta.appendChild(el("span",{class:"tag g", text:"확인함"}));
+            var ub=el("button",{class:"btn sm", style:"margin-left:6px;", text:"되돌리기"});
+            ub.addEventListener("click", function(){
+              delete st.okd[k];
+              if(row.key) delete st.nod[row.key];
+              persistVat(); renderView();
+            });
+            ta.appendChild(ub);
+          } else {
+            if(side==="ht"){
+              var nb=el("button",{class:"btn sm pri", text:"전표 만들기"});
+              nb.addEventListener("click", function(){ draftFromHometax(row, nm); });
+              ta.appendChild(nb);
+            }
+            var ok=el("button",{class:"btn sm", style:side==="ht"?"margin-left:5px;":"", text:"확인함"});
+            ok.addEventListener("click", function(){
+              var why=askWhy();
+              if(!why) return;
+              st.okd[k]={t:why.t, at:new Date().toISOString()};
+              if(side==="bk" && nm==="매입" && why.ded===false && row.key) st.nod[row.key]=true;
+              persistVat(); renderView();
+              toast(why.ded===false ? "확인했습니다 — 공제받지 못하는 매입으로 잡았습니다" : "확인했습니다");
+            });
+            ta.appendChild(ok);
+          }
+          tr.appendChild(ta);
           tb.appendChild(tr);
+          if(okv){
+            var wr=el("tr");
+            var wtd=el("td",{colspan:"7", class:"mut",
+              style:"padding-top:0;padding-bottom:8px;font-size:12px;border-bottom:1px solid var(--rule-soft);"});
+            wtd.textContent="확인 사유 — "+(okv.t||"")+"  ("+String(okv.at||"").slice(0,10)+")";
+            wr.appendChild(wtd); tb.appendChild(wr);
+          }
         });
-        tab.appendChild(tb); tw.appendChild(tab); c4.appendChild(tw);
+        tab.appendChild(tb); tw.appendChild(tab); return tw;
       }
-      block("홈택스에는 있는데 장부에 없습니다 — 전표를 빠뜨린 것입니다", m.onlyTax, "c");
-      block("장부에는 있는데 홈택스에 없습니다 — 계산서가 발급·수취되지 않았거나 자료를 덜 가져온 것입니다", m.onlyBook, "w");
-      if(m.diff.length){
-        c4.appendChild(el("div",{class:"ch", style:"border-top:1px solid var(--rule);"},[
-          el("span",{text:"같은 거래처인데 세액이 다릅니다"}),
-          el("span",{class:"tag c", text:m.diff.length+"건"})
-        ]));
-        var twD=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tabD=el("table");
-        tabD.innerHTML='<thead><tr><th style="width:96px">작성일</th><th style="width:150px">거래처</th>'
-          +'<th class="n" style="width:110px">장부 세액</th><th class="n" style="width:110px">홈택스 세액</th>'
-          +'<th class="n" style="width:100px">차이</th><th>적요</th></tr></thead>';
-        var tbD=el("tbody");
-        m.diff.forEach(function(x){
-          var tr=el("tr");
-          tr.appendChild(el("td",{class:"c", text:x.b.date}));
-          tr.appendChild(el("td",{class:"mut", text:x.b.partner||x.h.name||"—"}));
-          tr.appendChild(el("td",{class:"n", text:fmt0(x.b.tax)}));
-          tr.appendChild(el("td",{class:"n", text:fmt0(x.h.tax)}));
-          tr.appendChild(el("td",{class:"n neg", text:fmt0((+x.h.tax||0)-(+x.b.tax||0))}));
-          tr.appendChild(el("td",{class:"mut", text:x.b.memo||""}));
-          tbD.appendChild(tr);
-        });
-        tabD.appendChild(tbD); twD.appendChild(tabD); c4.appendChild(twD);
+      function group(title, rows, side, cls, extraCol){
+        if(!rows.length) return;
+        var pend=rows.filter(function(r){ return !isOk(r.b||r, side); });
+        var okr=rows.filter(function(r){ return isOk(r.b||r, side); });
+        if(pend.length){
+          c4.appendChild(el("div",{class:"ch", style:"border-top:1px solid var(--rule);"},[
+            el("span",{text:title}), el("span",{class:"tag "+cls, text:pend.length+"건"})
+          ]));
+          c4.appendChild(table(pend, side, extraCol));
+        }
+        if(okr.length){
+          c4.appendChild(el("div",{class:"ch", style:"border-top:1px solid var(--rule);"},[
+            el("span",{text:title+" — 확인한 것"}), el("span",{class:"tag g", text:okr.length+"건"})
+          ]));
+          c4.appendChild(table(okr, side, extraCol));
+        }
       }
-      if(okAll){
+      group("홈택스에는 있는데 장부에 없습니다 — 전표를 빠뜨린 것입니다", m.onlyTax, "ht", "c");
+      group("장부에는 있는데 홈택스에 없습니다 — 계산서가 오가지 않았거나 자료를 덜 가져온 것입니다", m.onlyBook, "bk", "w");
+      group("같은 거래처인데 세액이 다릅니다", m.diff, "bk", "c", "차이");
+
+      if(clean){
         c4.appendChild(el("div",{class:"chkbar ok", html:
-          svg("M4 10.4l4 4 8-9",15)+"<span>장부와 홈택스가 건별로 모두 맞습니다</span>"}));
+          svg("M4 10.4l4 4 8-9",15)+"<span>"+(m.ok.length?"건별로 다 맞거나 확인을 마쳤습니다":"확인을 마쳤습니다")+"</span>"}));
       }
+      c4.appendChild(el("div",{class:"note", text:
+        "안 맞아도 정상인 경우가 있습니다. 신용카드나 현금영수증으로 산 것은 세금계산서 목록에 없고, 해외 결제는 계산서 자체가 없습니다. 「확인함」을 누르고 이유를 고르면 확인한 것으로 넘어가고 다음에 다시 묻지 않습니다. 「해외 결제」나 「간이영수증」처럼 계산서가 없는 매입은 공제받지 못하므로 매입세액에서 자동으로 빼 드립니다. 홈택스에만 있는 건은 「전표 만들기」를 누르면 날짜·거래처·금액이 채워진 전표가 열립니다."}));
       wrap.appendChild(c4);
     });
   }
