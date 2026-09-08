@@ -1398,7 +1398,9 @@ function viewLedger(){
       mb.addEventListener("click", function(){ loadForEdit(v); });
       var lb=el("button",{class:"btn sm", text:"다시 잠금"});
       lb.addEventListener("click", function(){ lockVoucher(v); });
-      sp.appendChild(mb); sp.appendChild(lb);
+      var db1=el("button",{class:"btn sm danger", text:"삭제"});
+      db1.addEventListener("click", function(){ deleteVoucher(v); });
+      sp.appendChild(mb); sp.appendChild(lb); sp.appendChild(db1);
     } else {
       if(!rev[v.id] && !v.reverses){
         var rb=el("button",{class:"btn sm", text:"역분개"});
