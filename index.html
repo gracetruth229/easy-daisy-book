@@ -478,6 +478,7 @@ var S = {
   db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
   trash:[],
   lastType:"은행거래", ldTab:"book", ldFocus:"",
+  closes:{}, closeLog:[],
   acct:"", acctP:"", pvTab:"acct", apAcct:"", apPartner:"", apZero:false,
   recon:{}, rcAcct:"", rcDate:"", rcTab:"bank",
   vat:{}, vatQ:"", bsAsOf:"", bsCmp:""
@@ -727,6 +728,15 @@ function viewEntry(){
   if(!S.draft) S.draft = newDraft();
   var d=S.draft, wrap=el("div");
 
+  /* 마감된 달인가 */
+  var blkMsg=draftBlocked();
+  if(blkMsg){
+    var cb0=el("div",{class:"banner c"});
+    cb0.innerHTML = svg("M6 9V6.6a4 4 0 018 0V9M4.6 9h10.8v7.4H4.6z",17)
+      + "<span><b>"+esc(blkMsg)+".</b> 작성일을 열려 있는 달로 바꾸시거나, 재무제표 화면에서 그 달의 마감을 푸세요. 잘못된 거래를 바로잡는 것이라면 마감을 풀지 말고 열려 있는 달에 역분개 전표를 만드는 편이 맞습니다.</span>";
+    wrap.appendChild(cb0);
+  }
+
   /* 무슨 전표를 고치는 중인지 */
   if(S.editId){
     var orig=null;
@@ -763,7 +773,11 @@ function viewEntry(){
   var g=el("div",{class:"grid2"});
   var fDate=el("div",{class:"f s3"},[el("label",{text:"작성일"})]);
   var iDate=el("input",{type:"date", value:d.date});
-  iDate.addEventListener("change", function(){ d.date=iDate.value; });
+  iDate.addEventListener("change", function(){
+    var was=isClosed(d.date);
+    d.date=iDate.value;
+    if(was!==isClosed(d.date)) renderView(); else updateSums();
+  });
   fDate.appendChild(iDate);
 
   var fType=el("div",{class:"f s3"},[el("label",{text:"전표유형"})]);
@@ -871,7 +885,7 @@ function viewEntry(){
   tb.appendChild(body); tw.appendChild(tb); head.appendChild(tw);
 
   /* 합계 */
-  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.abs>0.5;
+  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.abs>0.5 && !draftBlocked();
   var bar=el("div",{class:"sumbar"});
   var addBtn=el("button",{class:"btn sm", html:svg("M10 5v10M5 10h10",13)+"<span>줄 추가</span>"});
   addBtn.addEventListener("click", function(){ d.lines.push(blankLine()); renderView(); });
@@ -938,7 +952,7 @@ function viewEntry(){
   return wrap;
 }
 function updateSums(){
-  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.abs>0.5;
+  var t=draftTotals(), ok=Math.abs(t.diff)<0.5 && t.abs>0.5 && !draftBlocked();
   var a=$("#sumDr"), b=$("#sumCr"), c=$("#sumDiff"), s=$("#saveBtn");
   if(a) a.textContent=fmt0(t.dr);
   if(b) b.textContent=fmt0(t.cr);
@@ -961,6 +975,11 @@ function isPL(code){
   return (c>=4000000 && c<=4999999) || (c>=8000000 && c<=9999999);
 }
 function reverseVoucher(v){
+  if(isClosed(todayISO())){
+    alert("오늘이 든 "+monthName(ym(todayISO()))+"이 마감되어 있어 역분개 전표를 만들 수 없습니다." + "\n\n"
+      + "재무제표 화면에서 그 달의 마감을 먼저 푸세요.");
+    return;
+  }
   var hasPL = (v.lines||[]).some(function(l){ return isPL(l.code); });
   var msg = "이 전표를 취소하는 역분개 전표를 만듭니다." + '\n\n' 
     + v.date + " · " + (v.memo||"(적요 없음)") + '\n'
@@ -987,6 +1006,7 @@ function reverseVoucher(v){
   render();
 }
 function deleteVoucher(v){
+  if(blockIfClosed(v, "빼")) return;
   var rev=reversedIds(), extra="";
   if(v.reverses) extra = "\n\n" + "이 전표는 다른 전표를 취소한 역분개 전표입니다. 빼면 원래 전표의 취소가 풀립니다.";
   else if(rev[v.id]) extra = "\n\n" + "이 전표에는 취소(역분개) 전표가 붙어 있습니다. 이것만 빼면 취소 전표가 홀로 남습니다.";
@@ -1013,6 +1033,7 @@ function deleteVoucher(v){
   render();
 }
 function restoreVoucher(v){
+  if(blockIfClosed(v, "되살리")) return;
   var msg = "이 전표를 장부로 되돌립니다." + "\n\n"
     + v.date + " · " + (v.memo||"(적요 없음)") + "\n"
     + fmt0(voucherAmount(v)) + "원" + "\n\n"
@@ -1027,6 +1048,7 @@ function restoreVoucher(v){
   render();
 }
 function unlockVoucher(v){
+  if(blockIfClosed(v, "고치")) return;
   var msg = "이 전표의 잠금을 풉니다." + '\n\n'
     + v.date + " · " + (v.memo||"(적요 없음)") + '\n'
     + fmt0(voucherAmount(v)) + "원" + '\n\n'
@@ -1050,6 +1072,7 @@ function lockVoucher(v){
   render();
 }
 function loadForEdit(v){
+  if(blockIfClosed(v, "고치")) return;
   if(!v.unlocked){ toast("먼저 잠금을 풀어 주세요"); return; }
   S.editId = v.id;
   S.draft = {date:v.date, type:v.type, memo:v.memo||"",
@@ -1074,6 +1097,8 @@ function copyToDraft(v){
 }
 function saveDraft(){
   var d=S.draft, t=draftTotals();
+  var blk=draftBlocked();
+  if(blk){ toast(blk); return; }
   if(Math.abs(t.diff)>=0.5){ toast("차변과 대변이 맞아야 저장됩니다"); return; }
   if(t.abs<0.5){ toast("금액이 들어간 줄이 없습니다"); return; }
   var lines=d.lines.filter(function(l){ return l.code && ((+l.dr||0)!==0 || (+l.cr||0)!==0); })
@@ -1392,6 +1417,8 @@ function viewLedger(){
     if(rev[v.id]) box.appendChild(el("span",{class:"tag w", text:"취소됨"}));
     if(v.unlocked) box.appendChild(el("span",{class:"tag c", text:"잠금 풀림"}));
     if(v.deleted) box.appendChild(el("span",{class:"tag c", text:"장부에서 뺀 전표 · "+String(v.deletedAt||"").slice(0,10)}));
+    var vClosed=isClosed(v.date);
+    if(vClosed) box.appendChild(el("span",{class:"tag g", text:"마감된 달"}));
 
     var sp=el("span",{style:"margin-left:auto;display:flex;gap:6px;"});
     if(v.deleted){
@@ -1414,11 +1441,14 @@ function viewLedger(){
       }
       var cb=el("button",{class:"btn sm", text:"복사"});
       cb.addEventListener("click", function(){ copyToDraft(v); });
-      var ub=el("button",{class:"btn sm", text:"잠금 해제"});
-      ub.addEventListener("click", function(){ unlockVoucher(v); });
-      var db2=el("button",{class:"btn sm danger", text:"삭제"});
-      db2.addEventListener("click", function(){ deleteVoucher(v); });
-      sp.appendChild(cb); sp.appendChild(ub); sp.appendChild(db2);
+      sp.appendChild(cb);
+      if(!vClosed){
+        var ub=el("button",{class:"btn sm", text:"잠금 해제"});
+        ub.addEventListener("click", function(){ unlockVoucher(v); });
+        var db2=el("button",{class:"btn sm danger", text:"삭제"});
+        db2.addEventListener("click", function(){ deleteVoucher(v); });
+        sp.appendChild(ub); sp.appendChild(db2);
+      }
     }
     box.appendChild(sp);
     gtd.appendChild(box); gtr.appendChild(gtd); tb.appendChild(gtr);
@@ -2634,8 +2664,103 @@ function fsTable(sections, totalLabel, totalVal){
   }
   tab.appendChild(tb); return tab;
 }
+/* ---------- 마감 ---------- */
+function isClosed(dateStr){
+  var m=ym(dateStr);
+  return !!(m && S.closes && S.closes[m]);
+}
+function monthName(m){ return String(m||"").replace("-","년 ")+"월"; }
+function closeMonth(m){
+  var open=[];
+  months().forEach(function(k){ if(k<m && !(S.closes||{})[k]) open.push(k); });
+  var msg = "「"+monthName(m)+"」을 마감합니다." + "\n\n"
+    + "마감하면 이 달에는 전표를 새로 넣거나 고치거나 뺄 수 없습니다." + "\n"
+    + "신고나 결산을 마친 달을 잠가 두면 신고한 숫자가 나중에 바뀌지 않습니다." + "\n\n"
+    + (open.length ? ("아직 열려 있는 앞 달이 있습니다 — " + open.map(monthName).join(", ") + "\n\n") : "")
+    + "필요하면 사유를 남기고 언제든 푸실 수 있습니다." + "\n\n" + "마감할까요?";
+  if(!confirm(msg)) return;
+  if(!S.closes) S.closes={};
+  if(!S.closeLog) S.closeLog=[];
+  var now=new Date().toISOString();
+  S.closes[m]={at:now};
+  S.closeLog.push({m:m, act:"마감", at:now, note:""});
+  persistCloses();
+  toast(monthName(m)+"을 마감했습니다");
+  render();
+}
+function reopenMonth(m){
+  var why=prompt("「"+monthName(m)+"」 마감을 풉니다." + "\n\n" + "왜 푸시나요? (기록에 남습니다)", "");
+  if(why===null) return;
+  if(!S.closeLog) S.closeLog=[];
+  delete S.closes[m];
+  S.closeLog.push({m:m, act:"해제", at:new Date().toISOString(), note:String(why||"").trim()});
+  persistCloses();
+  toast(monthName(m)+" 마감을 풀었습니다");
+  render();
+}
+/* 지금 쓰는 전표가 막혀 있는지 */
+function draftBlocked(){
+  if(!S.draft) return "";
+  if(isClosed(S.draft.date)) return monthName(ym(S.draft.date))+"은 마감된 달이라 전표를 넣을 수 없습니다";
+  if(S.editId){
+    var orig=null;
+    S.vouchers.forEach(function(v){ if(v.id===S.editId) orig=v; });
+    if(orig && isClosed(orig.date)) return "고치려는 전표가 든 "+monthName(ym(orig.date))+"이 마감되었습니다";
+  }
+  return "";
+}
+function blockIfClosed(v, what){
+  if(!isClosed(v.date)) return false;
+  alert(monthName(ym(v.date))+"은 마감된 달입니다." + "\n\n"
+    + v.date + " · " + (v.memo||"(적요 없음)") + "\n\n"
+    + "이 전표를 "+what+"으려면 재무제표 화면에서 그 달의 마감을 먼저 푸세요." + "\n"
+    + "거래를 바로잡는 것이 목적이라면, 마감을 풀지 말고 열려 있는 달에 역분개 전표를 만드는 편이 맞습니다.");
+  return true;
+}
+function closeCard(){
+  var card=el("div",{class:"card", style:"margin-bottom:16px;"});
+  var cnt={};
+  S.vouchers.forEach(function(v){ var m=ym(v.date); if(m) cnt[m]=(cnt[m]||0)+1; });
+  var ms=bsMonths(), nClosed=0;
+  ms.forEach(function(m){ if((S.closes||{})[m]) nClosed++; });
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"기간 마감"}),
+    el("span",{class:"tag "+(nClosed?"g":"b"), text: nClosed ? (nClosed+"개 달이 잠겨 있습니다") : "잠근 달이 없습니다"})
+  ]));
+  var tw=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:130px">달</th><th class="n" style="width:90px">전표</th><th style="width:90px">상태</th><th style="width:120px">마감한 날</th><th></th></tr></thead>';
+  var tb=el("tbody");
+  ms.forEach(function(m){
+    var c=(S.closes||{})[m], tr=el("tr");
+    tr.appendChild(el("td",{class:"c", style:"font-weight:600;", text:monthName(m)}));
+    tr.appendChild(el("td",{class:"n"+(cnt[m]?"":" zero"), text:cnt[m]?String(cnt[m]):"—"}));
+    var tdS=el("td");
+    tdS.appendChild(el("span",{class:"tag "+(c?"g":"b"), text:c?"마감":"열림"}));
+    tr.appendChild(tdS);
+    tr.appendChild(el("td",{class:"c mut", text:c?String(c.at||"").slice(0,10):"—"}));
+    var ta=el("td");
+    var b=el("button",{class:"btn sm"+(c?"":" pri"), text:c?"마감 풀기":"마감"});
+    b.addEventListener("click", function(){ if(c) reopenMonth(m); else closeMonth(m); });
+    ta.appendChild(b); tr.appendChild(ta);
+    tb.appendChild(tr);
+  });
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  var log=(S.closeLog||[]).slice().reverse().slice(0,6);
+  if(log.length){
+    var lw=el("div",{class:"note", style:"border-top:1px solid var(--rule-soft);"});
+    lw.appendChild(el("b",{text:"마감 기록"}));
+    log.forEach(function(x){
+      lw.appendChild(el("div",{text:String(x.at||"").slice(0,10)+" · "+monthName(x.m)+" "+x.act+(x.note?" — "+x.note:"")}));
+    });
+    card.appendChild(lw);
+  }
+  card.appendChild(el("div",{class:"note", text:
+    "부가세 신고나 결산을 마친 달을 잠급니다. 잠근 달에는 전표를 넣거나 고치거나 뺄 수 없어서, 이미 신고한 숫자가 나중에 바뀌지 않습니다. 잘못된 거래를 바로잡을 때는 마감을 풀지 말고 열려 있는 달에 역분개 전표를 만드는 편이 맞습니다. 마감을 푼 기록은 사유와 함께 남습니다."}));
+  return card;
+}
 function viewFS(){
   var wrap=el("div");
+  wrap.appendChild(closeCard());
   var grid=el("div",{class:"fs2"});
   var asOf = S.bsAsOf || (S.period==="all" ? "" : S.period);
   var bs = buildBS(asOf);
@@ -3329,6 +3454,8 @@ function applySeed(seed){
   S.projects = Array.isArray(seed.projects) ? seed.projects.slice() : [];
   S.recon = (seed.recon && typeof seed.recon==="object") ? seed.recon : {};
   S.vat = (seed.vat && typeof seed.vat==="object") ? seed.vat : {};
+  S.closes = (seed.closes && typeof seed.closes==="object") ? seed.closes : {};
+  S.closeLog = Array.isArray(seed.closeLog) ? seed.closeLog : [];
   splitVouchers((Array.isArray(seed.vouchers)?seed.vouchers:[]).concat(Array.isArray(seed.trash)?seed.trash:[]));
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
@@ -3341,7 +3468,8 @@ function saveAll(){
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
       partners:S.partners, projects:S.projects, vouchers:S.vouchers, trash:S.trash,
-      recon:S.recon||{}, vat:S.vat||{}, seedStamp:S.seedStamp||"",
+      recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[],
+      seedStamp:S.seedStamp||"",
       savedAt:new Date().toISOString()
     }));
     S.dbState="이 브라우저에 저장됨";
@@ -3357,7 +3485,7 @@ function loadAll(){
 
   if(!raw){
     if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.firstRun=true;
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
   }
@@ -3370,10 +3498,12 @@ function loadAll(){
     splitVouchers((Array.isArray(d.vouchers)?d.vouchers:[]).concat(Array.isArray(d.trash)?d.trash:[]));
     S.recon=(d.recon && typeof d.recon==="object")?d.recon:{};
     S.vat=(d.vat && typeof d.vat==="object")?d.vat:{};
+    S.closes=(d.closes && typeof d.closes==="object")?d.closes:{};
+    S.closeLog=Array.isArray(d.closeLog)?d.closeLog:[];
     S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={};
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[];
     S.dbState="저장된 자료를 읽지 못했습니다";
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
@@ -3410,6 +3540,7 @@ function persistPartners(){
 function persistAccounts(){ saveAll(); }
 function persistRecon(){ saveAll(); }
 function persistVat(){ saveAll(); }
+function persistCloses(){ saveAll(); }
 function persistVoucher(id, doc){
   putLocal(id, doc);
   S.firstRun=false; saveAll();
@@ -3418,7 +3549,8 @@ function backupJson(){
   return JSON.stringify({
     app:"gongan-ledger", version:1, exportedAt:new Date().toISOString(),
     company:S.co, accounts:S.accounts, partners:S.partners, projects:S.projects,
-    recon:S.recon||{}, vat:S.vat||{}, vouchers:S.vouchers, trash:S.trash
+    recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[],
+    vouchers:S.vouchers, trash:S.trash
   }, null, 1);
 }
 function restoreJson(text){
@@ -3435,6 +3567,16 @@ function restoreJson(text){
   (d.partners||[]).forEach(function(p){ if(p && p.name && !ph[p.name]) S.partners.push(p); });
   var jh={}; S.projects.forEach(function(p){ jh[p.name]=1; });
   (d.projects||[]).forEach(function(p){ if(p && p.name && !jh[p.name]) S.projects.push(p); });
+  if(d.closes && typeof d.closes==="object"){
+    if(!S.closes) S.closes={};
+    Object.keys(d.closes).forEach(function(m){ if(!S.closes[m]) S.closes[m]=d.closes[m]; });
+  }
+  if(Array.isArray(d.closeLog) && d.closeLog.length){
+    if(!S.closeLog) S.closeLog=[];
+    var seen={};
+    S.closeLog.forEach(function(x){ seen[x.m+"|"+x.act+"|"+x.at]=1; });
+    d.closeLog.forEach(function(x){ if(!seen[x.m+"|"+x.act+"|"+x.at]) S.closeLog.push(x); });
+  }
   if(d.recon && typeof d.recon==="object"){
     if(!S.recon) S.recon={};
     Object.keys(d.recon).forEach(function(code){
