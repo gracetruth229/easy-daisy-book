@@ -134,6 +134,16 @@ input[type=number]{-moz-appearance:textfield;}
 .ch .lb2{font-size:11.5px;color:var(--ink-3);font-weight:500;}
 select.mini{height:28px;padding:0 8px;border:1px solid var(--rule);border-radius:7px;
   background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:600;}
+.kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:9px;padding:14px 15px;}
+.kind{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;
+  padding:11px 13px;border:1px solid var(--rule);border-radius:var(--r-btn);
+  background:var(--surface);cursor:pointer;}
+.kind:hover{border-color:var(--accent);background:var(--accent-soft);}
+.kind b{font-size:14px;font-weight:700;letter-spacing:-.02em;}
+.kind span{font-size:11.5px;color:var(--ink-3);line-height:1.45;}
+.kind.on{background:var(--accent);border-color:var(--accent);box-shadow:var(--sh-btn);}
+.kind.on b{color:var(--on-accent);}
+.kind.on span{color:rgba(255,255,255,.82);}
 .rcgrid{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;padding:13px 15px;}
 .rcgrid .f{display:flex;flex-direction:column;gap:5px;}
 .rcgrid .f label{font-size:11.5px;color:var(--ink-3);font-weight:500;}
@@ -482,6 +492,7 @@ var S = {
   trash:[],
   lastType:"은행거래", ldTab:"book", ldFocus:"",
   closes:{}, closeLog:[], recur:[],
+  easy:{open:true, kind:"", date:"", partner:"", bizno:"", memo:"", acct:"", total:""},
   acct:"", acctP:"", pvTab:"acct", apAcct:"", apPartner:"", apZero:false,
   recon:{}, rcAcct:"", rcDate:"", rcTab:"bank",
   vat:{}, vatQ:"", bsAsOf:"", bsCmp:""
@@ -733,6 +744,237 @@ function accountSelect(val, onch){
   s.addEventListener("change", function(){ onch(s.value); });
   return s;
 }
+/* ---------- 거래 유형 ----------
+   sides: 각 줄이 어느 자리를 맡는지
+     exp   비용·자산 (사용자가 고른다)
+     rev   매출 (사용자가 고른다)
+     vin   매입세액   vout 매출세액
+     cash  통장·현금  pay 미지급금  recv 외상매출금  card 미지급금(카드)
+*/
+var TXKINDS = [
+  {k:"buy_tax",  t:"세금계산서를 받았다", sub:"물건·서비스를 사고 계산서를 받음",
+   vtype:"외상거래", vat:true,  dir:"buy",  pay:"pay"},
+  {k:"buy_card", t:"카드로 샀다",        sub:"사업용 카드 결제 · 매입세액 공제",
+   vtype:"외상거래", vat:true,  dir:"buy",  pay:"card"},
+  {k:"buy_cash", t:"통장에서 바로 나갔다", sub:"이체·자동이체로 결제",
+   vtype:"은행거래", vat:true,  dir:"buy",  pay:"cash"},
+  {k:"buy_none", t:"영수증만 있다",       sub:"간이영수증·해외결제 · 공제 안 됨",
+   vtype:"은행거래", vat:false, dir:"buy",  pay:"cash"},
+  {k:"sell_tax", t:"세금계산서를 발행했다", sub:"팔고 계산서를 끊음",
+   vtype:"외상거래", vat:true,  dir:"sell", pay:"recv"},
+  {k:"sell_cash",t:"팔고 통장으로 받았다", sub:"입금까지 끝난 매출",
+   vtype:"은행거래", vat:true,  dir:"sell", pay:"cash"},
+  {k:"pay_due",  t:"미지급금을 갚았다",   sub:"전에 잡아 둔 외상을 결제",
+   vtype:"은행거래", vat:false, dir:"pay",  pay:"cash"},
+  {k:"get_due",  t:"외상매출금을 받았다", sub:"전에 잡아 둔 매출대금 입금",
+   vtype:"은행거래", vat:false, dir:"get",  pay:"cash"}
+];
+function txKind(k){
+  for(var i=0;i<TXKINDS.length;i++) if(TXKINDS[i].k===k) return TXKINDS[i];
+  return null;
+}
+/* 자주 쓰는 계정을 코드 앞자리로 찾는다 */
+function pickAcct(prefixes, fallbackLo, fallbackHi){
+  for(var p=0;p<prefixes.length;p++){
+    for(var i=0;i<S.accounts.length;i++){
+      if(String(S.accounts[i].code).slice(0,3)===prefixes[p]) return S.accounts[i].code;
+    }
+  }
+  for(var j=0;j<S.accounts.length;j++){
+    var c=parseInt(S.accounts[j].code,10);
+    if(c>=fallbackLo && c<=fallbackHi) return S.accounts[j].code;
+  }
+  return "";
+}
+function roleAcct(role){
+  var va=vatAccounts();
+  if(role==="vin")  return va.inn[0]||"";
+  if(role==="vout") return va.out[0]||"";
+  if(role==="cash") return pickAcct(["103","101"], 1000000, 1099999);
+  if(role==="pay" || role==="card") return pickAcct(["253","251"], 2500000, 2599999);
+  if(role==="recv") return pickAcct(["108","120"], 1080000, 1209999);
+  return "";
+}
+/* 총액에서 공급가액과 세액을 가른다 */
+function splitVat(total){
+  var t=Math.round((+total||0)/11);
+  return {supply:(+total||0)-t, tax:t};
+}
+/* 유형과 총액으로 분개를 만든다 */
+function buildFromKind(k, total, opt){
+  opt=opt||{};
+  var K=txKind(k); if(!K) return null;
+  var who=opt.partner||"", biz=opt.bizno||"", memo=opt.memo||"";
+  function ln(code, dr, cr, m){
+    return {code:code||"", project:opt.project||"", partner:who, bizno:biz,
+            memo:m||"", dr:dr, cr:cr};
+  }
+  var v = K.vat ? splitVat(total) : {supply:(+total||0), tax:0};
+  var lines=[];
+  if(K.dir==="buy"){
+    lines.push(ln(opt.acct||"", v.supply, "", memo));
+    if(K.vat && v.tax) lines.push(ln(roleAcct("vin"), v.tax, "", "매입세액"));
+    lines.push(ln(roleAcct(K.pay), "", (+total||0), K.pay==="card"?"카드 결제":""));
+  } else if(K.dir==="sell"){
+    lines.push(ln(roleAcct(K.pay), (+total||0), "", ""));
+    lines.push(ln(opt.acct||"", "", v.supply, memo));
+    if(K.vat && v.tax) lines.push(ln(roleAcct("vout"), "", v.tax, "매출세액"));
+  } else if(K.dir==="pay"){
+    lines.push(ln(roleAcct("pay"), (+total||0), "", memo));
+    lines.push(ln(roleAcct("cash"), "", (+total||0), ""));
+  } else {
+    lines.push(ln(roleAcct("cash"), (+total||0), "", memo));
+    lines.push(ln(roleAcct("recv"), "", (+total||0), ""));
+  }
+  return {type:K.vtype, lines:lines};
+}
+/* 쉬운 입력 칸 */
+function easyCard(){
+  var E=S.easy;
+  var card=el("div",{class:"card", style:"margin-bottom:16px;"});
+  var rgt=el("span",{class:"r"});
+  var tg=el("button",{class:"btn sm", text:E.open?"직접 쓰기로":"쉬운 입력 접기"});
+  tg.addEventListener("click", function(){ E.open=!E.open; renderView(); });
+  rgt.appendChild(el("span",{class:"tag b", text:"차변·대변을 묻지 않습니다"}));
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"무슨 일이 있었나요?"}), rgt
+  ]));
+
+  /* 유형 고르기 */
+  var pick=el("div",{class:"kinds"});
+  TXKINDS.forEach(function(K){
+    var b=el("button",{class:"kind"+(E.kind===K.k?" on":"")});
+    b.appendChild(el("b",{text:K.t}));
+    b.appendChild(el("span",{text:K.sub}));
+    b.addEventListener("click", function(){
+      E.kind=(E.kind===K.k?"":K.k);
+      renderView();
+    });
+    pick.appendChild(b);
+  });
+  card.appendChild(pick);
+
+  if(!E.kind){
+    card.appendChild(el("div",{class:"note", text:
+      "위에서 하나를 고르면 금액 넣는 칸이 나옵니다. 총액만 넣으면 공급가액과 부가세를 갈라 분개를 만들어 드립니다. 만들어진 전표는 아래에서 그대로 고치실 수 있습니다."}));
+    return card;
+  }
+
+  var K=txKind(E.kind);
+  var g=el("div",{class:"rcgrid"});
+  function fld(label, node, w){
+    var f=el("div",{class:"f"});
+    f.appendChild(el("label",{text:label}));
+    if(w) node.style.width=w;
+    f.appendChild(node); g.appendChild(f); return node;
+  }
+  var iDate=el("input",{type:"date", value:E.date||todayISO()});
+  iDate.addEventListener("change", function(){ E.date=iDate.value; });
+  fld("날짜", iDate);
+
+  var iWho=el("input",{type:"text", value:E.partner||"", list:"partnerNames",
+                       placeholder:"거래처", autocomplete:"off"});
+  iWho.addEventListener("input", function(){
+    E.partner=iWho.value;
+    var hit=findPartner(iWho.value);
+    if(hit && hit.bizno) E.bizno=bizFormat(hit.bizno);
+  });
+  fld("거래처", iWho, "170px");
+
+  var needAcct=(K.dir==="buy" || K.dir==="sell");
+  if(needAcct){
+    var sA=accountSelect(E.acct||"", function(v){ E.acct=v; });
+    fld(K.dir==="buy" ? "무엇을 샀나 (비용·자산 계정)" : "무엇을 팔았나 (매출 계정)", sA, "230px");
+  }
+
+  var iMemo=el("input",{type:"text", value:E.memo||"", placeholder:"예) 사무실 임차료 9월분"});
+  iMemo.addEventListener("input", function(){ E.memo=iMemo.value; });
+  fld("적요", iMemo, "240px");
+
+  var iAmt=el("input",{type:"number", step:"1", class:"num", value:E.total||"",
+                       placeholder:"부가세 포함 총액"});
+  iAmt.addEventListener("input", function(){ E.total=iAmt.value; updateEasy(); });
+  fld(K.vat ? "총액 (부가세 포함)" : "금액", iAmt);
+  card.appendChild(g);
+
+  /* 미리보기 */
+  var pv=el("div",{id:"easyPv"});
+  card.appendChild(pv);
+  card.appendChild(el("div",{class:"note", text:
+    K.vat ? "총액만 넣으시면 공급가액과 부가세를 10%로 갈라 놓습니다. 아래 「이렇게 기록됩니다」가 실제로 저장될 분개입니다. 「전표에 넣기」를 누르면 아래 표로 옮겨지고, 거기서 얼마든지 고치실 수 있습니다."
+          : "부가세 없는 거래입니다. 매입세액을 잡지 않으므로 공제받지 못합니다."}));
+  setTimeout(updateEasy, 0);
+  return card;
+}
+function easyPreview(){
+  var E=S.easy, K=txKind(E.kind);
+  if(!K) return null;
+  return buildFromKind(E.kind, E.total, {partner:E.partner, bizno:E.bizno,
+                                         memo:E.memo, acct:E.acct});
+}
+function updateEasy(){
+  var pv=$("#easyPv"); if(!pv) return;
+  pv.innerHTML="";
+  var E=S.easy, K=txKind(E.kind);
+  var built=easyPreview();
+  var amt=+E.total||0;
+  if(!K || !amt){
+    pv.appendChild(el("div",{class:"note", style:"border-top:1px solid var(--rule-soft);",
+      text:"금액을 넣으면 어떻게 기록되는지 여기에 보여 드립니다."}));
+    return;
+  }
+  var head=el("div",{class:"ch", style:"border-top:1px solid var(--rule);"});
+  head.appendChild(el("span",{text:"이렇게 기록됩니다"}));
+  var need=[];
+  built.lines.forEach(function(l){ if(!l.code) need.push(1); });
+  head.appendChild(el("span",{class:"tag "+(need.length?"w":"g"),
+    text: need.length ? "계정과목을 하나 골라 주세요" : "차·대 일치"}));
+  pv.appendChild(head);
+  var tw=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:74px">코드</th><th>계정과목</th>'
+    +'<th style="width:150px">거래처</th><th>적요</th>'
+    +'<th class="n" style="width:130px">차변</th><th class="n" style="width:130px">대변</th></tr></thead>';
+  var tb=el("tbody");
+  built.lines.forEach(function(l){
+    var tr=el("tr");
+    tr.appendChild(el("td",{class:"c", text:l.code?String(l.code).slice(0,3):"—"}));
+    tr.appendChild(el("td",{text:l.code?accName(l.code):"(고르지 않음)",
+      style:l.code?"":"color:var(--warn);font-weight:600;"}));
+    tr.appendChild(el("td",{class:"mut", text:l.partner||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:l.memo||E.memo||""}));
+    tr.appendChild(el("td",{class:"n dr", text:fmt(l.dr)}));
+    tr.appendChild(el("td",{class:"n cr", text:fmt(l.cr)}));
+    tb.appendChild(tr);
+  });
+  tab.appendChild(tb); tw.appendChild(tab); pv.appendChild(tw);
+  var bar=el("div",{class:"sumbar"});
+  if(K.vat){
+    var v=splitVat(amt);
+    bar.appendChild(el("span",{class:"lb", text:"공급가액"}));
+    bar.appendChild(el("span",{class:"vl", text:fmt0(v.supply)}));
+    bar.appendChild(el("span",{class:"lb", text:"부가세"}));
+    bar.appendChild(el("span",{class:"vl", text:fmt0(v.tax)}));
+  }
+  bar.appendChild(el("span",{class:"lb", text:"총액"}));
+  bar.appendChild(el("span",{class:"vl", text:fmt0(amt)}));
+  bar.appendChild(el("span",{class:"sp"}));
+  var go=el("button",{class:"btn pri", text:"전표에 넣기"});
+  go.addEventListener("click", applyEasy);
+  bar.appendChild(go);
+  pv.appendChild(bar);
+}
+function applyEasy(){
+  var E=S.easy, built=easyPreview();
+  if(!built){ toast("무슨 일이 있었는지 먼저 골라 주세요"); return; }
+  if(!(+E.total||0)){ toast("금액을 넣어 주세요"); return; }
+  S.draft={date:E.date||todayISO(), type:built.type, memo:E.memo||"", lines:built.lines};
+  var miss=0;
+  built.lines.forEach(function(l){ if(!l.code) miss++; });
+  S.easy={open:true, kind:"", date:E.date, partner:"", bizno:"", memo:"", acct:"", total:""};
+  renderView();
+  try{ window.scrollTo(0,0); }catch(e){}
+  toast(miss ? "전표에 넣었습니다 — 비어 있는 계정과목을 골라 주세요" : "전표에 넣었습니다 — 확인하고 저장하세요");
+}
 function viewEntry(){
   if(!S.draft) S.draft = newDraft();
   var d=S.draft, wrap=el("div");
@@ -771,6 +1013,17 @@ function viewEntry(){
     dl.appendChild(el("option",{value:p.name, label:(p.kind||"")+(p.bizno?" · "+bizFormat(p.bizno):"")}));
   });
   wrap.appendChild(dl);
+
+  /* 쉬운 입력 — 차변·대변을 묻지 않는 길 */
+  if(!S.editId && S.easy.open !== false) wrap.appendChild(easyCard());
+  if(!S.editId && S.easy.open === false){
+    var ob=el("div",{class:"ldbar"});
+    var obb=el("button",{class:"btn sm pri", text:"쉬운 입력 열기"});
+    obb.addEventListener("click", function(){ S.easy.open=true; renderView(); });
+    ob.appendChild(obb);
+    ob.appendChild(el("span",{class:"cntx", text:"차변·대변을 모르셔도 됩니다"}));
+    wrap.appendChild(ob);
+  }
 
   var head=el("div",{class:"card"});
   head.appendChild(el("div",{class:"ch"},[
