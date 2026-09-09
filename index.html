@@ -134,12 +134,15 @@ input[type=number]{-moz-appearance:textfield;}
 .ch .lb2{font-size:11.5px;color:var(--ink-3);font-weight:500;}
 select.mini{height:28px;padding:0 8px;border:1px solid var(--rule);border-radius:7px;
   background:var(--surface);color:var(--ink);font:inherit;font-size:12px;font-weight:600;}
-.kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(216px,1fr));gap:9px;padding:14px 15px;}
+.kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(178px,1fr));gap:9px;padding:14px 15px;}
+.kindgrp{grid-column:1/-1;font-family:var(--f-m);font-size:10.5px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-top:6px;}
+.kindgrp:first-child{margin-top:0;}
 .kind{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;
   padding:11px 13px;border:1px solid var(--rule);border-radius:var(--r-btn);
   background:var(--surface);cursor:pointer;}
 .kind:hover{border-color:var(--accent);background:var(--accent-soft);}
-.kind b{font-size:14px;font-weight:700;letter-spacing:-.02em;}
+.kind b{font-size:15px;font-weight:700;letter-spacing:-.03em;}
 .kind span{font-size:11.5px;color:var(--ink-3);line-height:1.45;}
 .kind.on{background:var(--accent);border-color:var(--accent);box-shadow:var(--sh-btn);}
 .kind.on b{color:var(--on-accent);}
@@ -752,21 +755,21 @@ function accountSelect(val, onch){
      cash  통장·현금  pay 미지급금  recv 외상매출금  card 미지급금(카드)
 */
 var TXKINDS = [
-  {k:"buy_tax",  t:"세금계산서를 받았다", sub:"물건·서비스를 사고 계산서를 받음",
+  {k:"buy_tax",  g:"매입", t:"세금계산서",   sub:"받고 나중에 결제",
    vtype:"외상거래", vat:true,  dir:"buy",  pay:"pay"},
-  {k:"buy_card", t:"카드로 샀다",        sub:"사업용 카드 결제 · 매입세액 공제",
+  {k:"buy_card", g:"매입", t:"카드",         sub:"사업용 카드로 결제",
    vtype:"외상거래", vat:true,  dir:"buy",  pay:"card"},
-  {k:"buy_cash", t:"통장에서 바로 나갔다", sub:"이체·자동이체로 결제",
+  {k:"buy_cash", g:"매입", t:"계좌이체",     sub:"통장에서 바로 나감",
    vtype:"은행거래", vat:true,  dir:"buy",  pay:"cash"},
-  {k:"buy_none", t:"영수증만 있다",       sub:"간이영수증·해외결제 · 공제 안 됨",
+  {k:"buy_none", g:"매입", t:"영수증",       sub:"간이영수증·해외결제 · 공제 안 됨",
    vtype:"은행거래", vat:false, dir:"buy",  pay:"cash"},
-  {k:"sell_tax", t:"세금계산서를 발행했다", sub:"팔고 계산서를 끊음",
+  {k:"sell_tax", g:"매출", t:"세금계산서",   sub:"발행하고 나중에 받음",
    vtype:"외상거래", vat:true,  dir:"sell", pay:"recv"},
-  {k:"sell_cash",t:"팔고 통장으로 받았다", sub:"입금까지 끝난 매출",
+  {k:"sell_cash",g:"매출", t:"입금",         sub:"받는 것까지 끝난 매출",
    vtype:"은행거래", vat:true,  dir:"sell", pay:"cash"},
-  {k:"pay_due",  t:"미지급금을 갚았다",   sub:"전에 잡아 둔 외상을 결제",
+  {k:"pay_due",  g:"정산", t:"미지급금 상환", sub:"잡아 둔 외상을 갚음",
    vtype:"은행거래", vat:false, dir:"pay",  pay:"cash"},
-  {k:"get_due",  t:"외상매출금을 받았다", sub:"전에 잡아 둔 매출대금 입금",
+  {k:"get_due",  g:"정산", t:"대금 회수",    sub:"외상매출금이 들어옴",
    vtype:"은행거래", vat:false, dir:"get",  pay:"cash"}
 ];
 function txKind(k){
@@ -842,7 +845,12 @@ function easyCard(){
 
   /* 유형 고르기 */
   var pick=el("div",{class:"kinds"});
+  var seen={};
   TXKINDS.forEach(function(K){
+    if(!seen[K.g]){
+      seen[K.g]=1;
+      pick.appendChild(el("div",{class:"kindgrp", text:K.g}));
+    }
     var b=el("button",{class:"kind"+(E.kind===K.k?" on":"")});
     b.appendChild(el("b",{text:K.t}));
     b.appendChild(el("span",{text:K.sub}));
@@ -862,6 +870,11 @@ function easyCard(){
 
   var K=txKind(E.kind);
   var g=el("div",{class:"rcgrid"});
+  var tagf=el("div",{class:"f"});
+  tagf.appendChild(el("label",{text:"고른 것"}));
+  tagf.appendChild(el("span",{class:"tag g", style:"height:34px;padding:0 12px;font-size:13px;",
+    text:K.g+" · "+K.t}));
+  g.appendChild(tagf);
   function fld(label, node, w){
     var f=el("div",{class:"f"});
     f.appendChild(el("label",{text:label}));
