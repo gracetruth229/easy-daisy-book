@@ -279,6 +279,8 @@ body{background:var(--paper);}
 .nav button.on svg{color:var(--on-accent);}
 .nav .ct{background:rgba(255,255,255,.28);color:inherit;border-radius:999px;font-weight:700;}
 .nav button:not(.on) .ct{background:var(--accent-soft);color:var(--accent-deep);}
+.nav .ct.hot{background:var(--warn);color:#fff;}
+.nav button:not(.on) .ct.hot{background:var(--warn);color:#fff;}
 .per select{border-radius:var(--r-in);border-color:var(--rule);background:var(--surface);font-weight:600;color:var(--ink);}
 .sfoot{border-top:1px solid var(--rule);}
 
@@ -465,6 +467,7 @@ var VIEWS = [
   {k:"pivot",    t:"집계표",    ic:"M3 16.4h14M5.6 16.4V9.6M10 16.4V4.4M14.4 16.4v-4.6"},
   {k:"fs",       t:"재무제표",  ic:"M5 3h10v14H5zM8 7h4M8 10h4M8 13h2"},
   {k:"recon",    t:"대사",  ic:"M3.5 7.5h13v8a1 1 0 01-1 1h-11a1 1 0 01-1-1zM3.5 7.5L10 3.5l6.5 4M7 12.2l2 2 4-4.2"},
+  {k:"recur",    t:"정기전표",  ic:"M4 7.5a6.5 6.5 0 0111.4-4.2M16 5.5V2.6M16 12.5a6.5 6.5 0 01-11.4 4.2M4 14.5v2.9"},
   {k:"projects", t:"프로젝트",  ic:"M3.5 6.5h5l1.6 2h10.4v9a1.6 1.6 0 01-1.6 1.6H5.1A1.6 1.6 0 013.5 17.5z"},
   {k:"partners", t:"거래처",    ic:"M7 9.2a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2zM2.6 16.4c0-2.6 2-4.2 4.4-4.2s4.4 1.6 4.4 4.2M13.4 8.6a2.2 2.2 0 100-4.4M14.2 12.4c2 .3 3.2 1.8 3.2 4"},
   {k:"accounts", t:"계정과목",  ic:"M4 6h12M4 10h12M4 14h7"},
@@ -478,7 +481,7 @@ var S = {
   db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
   trash:[],
   lastType:"은행거래", ldTab:"book", ldFocus:"",
-  closes:{}, closeLog:[],
+  closes:{}, closeLog:[], recur:[],
   acct:"", acctP:"", pvTab:"acct", apAcct:"", apPartner:"", apZero:false,
   recon:{}, rcAcct:"", rcDate:"", rcTab:"bank",
   vat:{}, vatQ:"", bsAsOf:"", bsCmp:""
@@ -668,7 +671,13 @@ function renderNav(){
     if(v.k==="accounts") ct=String(S.accounts.length);
     if(v.k==="partners") ct=String(S.partners.length);
     if(v.k==="projects") ct=String(S.projects.length);
-    var b=el("button",{class:(S.view===v.k?"on":""), html:svg(v.ic)+"<span>"+v.t+"</span>"+(ct?'<span class="ct">'+ct+"</span>":"")});
+    var hot=false;
+    if(v.k==="recur"){
+      var dn=recurDue().length;
+      hot = dn>0;
+      ct = dn ? String(dn) : (recurList().length?String(recurList().length):"");
+    }
+    var b=el("button",{class:(S.view===v.k?"on":""), html:svg(v.ic)+"<span>"+v.t+"</span>"+(ct?'<span class="ct'+(hot?" hot":"")+'" title="'+(hot?"만들 때가 된 정기전표":"")+'">'+ct+"</span>":"")});
     b.addEventListener("click", function(){
       if(!leaveEdit(v.k)) return;
       S.view=v.k; render();
@@ -909,6 +918,11 @@ function viewEntry(){
   if(!ok) save.setAttribute("disabled","disabled");
   save.addEventListener("click", saveDraft);
   bar.appendChild(save);
+  if(!S.editId){
+    var rcb=el("button",{class:"btn", text:"정기전표로 등록"});
+    rcb.addEventListener("click", recurFromDraft);
+    bar.appendChild(rcb);
+  }
   var clr=el("button",{class:"btn", text:S.editId?"수정 취소":"비우기"});
   clr.addEventListener("click", function(){ S.editId=null; S.draft=newDraft(); renderView(); });
   bar.appendChild(clr);
@@ -2890,6 +2904,203 @@ function viewFS(){
 }
 
 /* ---------- 프로젝트 ---------- */
+/* ---------- 정기전표 ---------- */
+function recurList(){ return Array.isArray(S.recur) ? S.recur : (S.recur=[]); }
+function dueDate(r, m){
+  var y=parseInt(m.slice(0,4),10), mo=parseInt(m.slice(5,7),10);
+  var last=new Date(y, mo, 0).getDate();
+  var d=Math.min(Math.max(parseInt(r.day,10)||1, 1), last);
+  return m+"-"+(d<10?"0":"")+d;
+}
+/* 이 정기전표가 그 달에 이미 만들어졌는가 */
+function madeIn(r, m){
+  var hit=null;
+  allVouchers().forEach(function(v){
+    if(v.recurId===r.id && ym(v.date)===m) hit=v;
+  });
+  return hit;
+}
+function recurMonths(r){
+  /* 시작월부터 이번 달까지 */
+  var out=[], start=r.from || ym(todayISO()), end=ym(todayISO());
+  var y=parseInt(start.slice(0,4),10), mo=parseInt(start.slice(5,7),10);
+  for(var i=0;i<120;i++){
+    var mm=(mo+i-1)%12+1, yy=y+Math.floor((mo+i-1)/12);
+    var k=yy+"-"+(mm<10?"0":"")+mm;
+    if(k>end) break;
+    if(r.to && k>r.to) break;
+    out.push(k);
+    if(out.length>120) break;
+  }
+  return out;
+}
+/* 아직 안 만든 것들 */
+function recurDue(){
+  var out=[];
+  recurList().forEach(function(r){
+    if(r.off) return;
+    recurMonths(r).forEach(function(m){
+      if(madeIn(r, m)) return;
+      var dt=dueDate(r, m);
+      if(dt>todayISO()) return;
+      if(isClosed(dt)) return;
+      out.push({r:r, m:m, date:dt});
+    });
+  });
+  out.sort(function(a,b){ return a.date.localeCompare(b.date); });
+  return out;
+}
+function recurAmount(r){
+  var t=0;
+  (r.lines||[]).forEach(function(l){ t+=Math.abs((+l.dr||0)-(+l.cr||0)); });
+  return t/2;
+}
+function makeRecur(item, silent){
+  var r=item.r, d=item.date;
+  if(isClosed(d)){ if(!silent) toast(monthName(ym(d))+"은 마감된 달입니다"); return false; }
+  var lines=(r.lines||[]).filter(function(l){ return l.code && ((+l.dr||0)!==0 || (+l.cr||0)!==0); })
+    .map(function(l){
+      return {code:l.code, name:accName(l.code), project:(l.project||"").trim(),
+              partner:l.partner||"", bizno:l.bizno||"",
+              memo:(l.memo||r.memo||""), dr:+l.dr||0, cr:+l.cr||0};
+    });
+  if(lines.length<2){ if(!silent) toast("정기전표에 계정과 금액이 두 줄 이상 있어야 합니다"); return false; }
+  var dr=0, cr=0;
+  lines.forEach(function(l){ dr+=l.dr; cr+=l.cr; });
+  if(Math.abs(dr-cr)>=0.5){ if(!silent) toast("정기전표의 차변과 대변이 맞지 않습니다"); return false; }
+  var id=d.replace(/-/g,"")+"-"+Math.random().toString(36).slice(2,8);
+  persistVoucher(id, {date:d, type:r.type||"은행거래", memo:r.memo||"", lines:lines,
+                      recurId:r.id, updatedAt:new Date().toISOString(), unlocked:false});
+  return true;
+}
+function makeAllRecur(){
+  var due=recurDue();
+  if(!due.length) return;
+  var msg = "대기 중인 정기전표 "+due.length+"건을 만듭니다." + "\n\n"
+    + due.slice(0,8).map(function(x){ return x.date+" · "+(x.r.memo||"(적요 없음)")+" · "+fmt0(recurAmount(x.r))+"원"; }).join("\n")
+    + (due.length>8 ? ("\n"+"… 외 "+(due.length-8)+"건") : "")
+    + "\n\n" + "만들까요?";
+  if(!confirm(msg)) return;
+  var n=0;
+  due.forEach(function(x){ if(makeRecur(x, true)) n++; });
+  toast("정기전표 "+n+"건을 만들었습니다");
+  render();
+}
+function recurFromDraft(){
+  var d=S.draft;
+  var lines=(d.lines||[]).filter(function(l){ return l.code && ((+l.dr||0)!==0 || (+l.cr||0)!==0); });
+  if(lines.length<2){ toast("계정과 금액이 있는 줄이 두 줄 이상이어야 합니다"); return; }
+  var nm=prompt("정기전표 이름 (적요로 씁니다)", d.memo||"");
+  if(nm===null) return;
+  var day=prompt("매달 며칠에 만들까요? (1~31, 그 달에 없는 날이면 말일)", String(parseInt(d.date.slice(8,10),10)));
+  if(day===null) return;
+  recurList().push({
+    id:"R"+Date.now().toString(36),
+    memo:String(nm||"").trim(), type:d.type||"은행거래",
+    day:Math.min(Math.max(parseInt(day,10)||1,1),31),
+    from:ym(d.date), to:"", off:false,
+    lines:lines.map(function(l){
+      return {code:l.code, project:l.project||"", partner:l.partner||"", bizno:l.bizno||"",
+              memo:l.memo||"", dr:+l.dr||0, cr:+l.cr||0};
+    })
+  });
+  persistRecur();
+  toast("정기전표로 등록했습니다 — 프로젝트 화면 옆 「정기전표」에서 관리하실 수 있습니다");
+  render();
+}
+function viewRecur(){
+  var wrap=el("div");
+  var due=recurDue();
+  if(due.length){
+    var bn=el("div",{class:"banner w"});
+    bn.innerHTML = svg("M10 5.6v4.6l3 1.8M10 3.2a6.8 6.8 0 100 13.6 6.8 6.8 0 000-13.6z",17)
+      + "<span><b>만들 때가 된 정기전표가 "+due.length+"건 있습니다.</b> "
+      + esc(due.slice(0,3).map(function(x){ return x.date+" "+(x.r.memo||""); }).join(" · "))
+      + (due.length>3 ? " 외 "+(due.length-3)+"건" : "") + "</span>";
+    var ab=el("button",{class:"btn sm pri", style:"margin-left:auto;flex:none;", text:"한꺼번에 만들기"});
+    ab.addEventListener("click", makeAllRecur);
+    bn.appendChild(ab);
+    wrap.appendChild(bn);
+  }
+  var card=el("div",{class:"card"});
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"정기전표 "+recurList().length+"개"}),
+    el("span",{class:"tag b", text:"전표 입력 화면에서 「정기전표로 등록」을 누르면 여기에 들어옵니다"})
+  ]));
+  if(!recurList().length){
+    card.appendChild(el("div",{class:"empty", html:"<b>등록된 정기전표가 없습니다</b>매달 같은 모양으로 들어오는 거래 — 임차료, 구독료, 호스팅비 같은 것 — 를 한 번 입력하고 「정기전표로 등록」을 누르세요. 다음 달부터는 버튼 한 번이면 됩니다."}));
+    wrap.appendChild(card); return wrap;
+  }
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th>이름</th><th style="width:88px">유형</th><th style="width:96px">주기</th><th style="width:150px">기간</th><th class="n" style="width:120px">금액</th><th class="n" style="width:86px">만든 달</th><th style="width:120px">대기</th><th style="width:190px"></th></tr></thead>';
+  var tb=el("tbody");
+  recurList().forEach(function(r, i){
+    var ms=recurMonths(r), made=0;
+    ms.forEach(function(m){ if(madeIn(r,m)) made++; });
+    var pend=due.filter(function(x){ return x.r.id===r.id; });
+    var tr=el("tr");
+    var td0=el("td");
+    td0.appendChild(el("span",{style:"font-weight:600;", text:r.memo||"(이름 없음)"}));
+    if(r.off) td0.appendChild(el("span",{class:"tag w", style:"margin-left:6px;", text:"멈춤"}));
+    tr.appendChild(td0);
+    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:r.type||"—"})]));
+    tr.appendChild(el("td",{class:"c", text:"매달 "+r.day+"일"}));
+    tr.appendChild(el("td",{class:"c mut", text:(r.from||"")+(r.to?" ~ "+r.to:" ~")}));
+    tr.appendChild(el("td",{class:"n", text:fmt0(recurAmount(r))}));
+    tr.appendChild(el("td",{class:"n mut", text:made+" / "+ms.length}));
+    var tdP=el("td");
+    if(pend.length){
+      var mb=el("button",{class:"btn sm pri", text:pend.length+"건 만들기"});
+      mb.addEventListener("click", function(){
+        var n=0;
+        pend.forEach(function(x){ if(makeRecur(x, true)) n++; });
+        toast(n+"건을 만들었습니다"); render();
+      });
+      tdP.appendChild(mb);
+    } else {
+      tdP.appendChild(el("span",{class:"tag g", text:"밀린 것 없음"}));
+    }
+    tr.appendChild(tdP);
+    var ta=el("td");
+    var eb=el("button",{class:"btn sm", text:"고치기"});
+    eb.addEventListener("click", function(){
+      var nm=prompt("이름 (적요)", r.memo||""); if(nm===null) return;
+      var dy=prompt("매달 며칠", String(r.day)); if(dy===null) return;
+      var to=prompt("언제까지? (YYYY-MM, 계속이면 비워 두세요)", r.to||""); if(to===null) return;
+      r.memo=String(nm).trim();
+      r.day=Math.min(Math.max(parseInt(dy,10)||1,1),31);
+      r.to=String(to).trim();
+      persistRecur(); render();
+    });
+    var pb=el("button",{class:"btn sm", style:"margin-left:5px;", text:r.off?"다시 켜기":"멈춤"});
+    pb.addEventListener("click", function(){ r.off=!r.off; persistRecur(); render(); });
+    var xb=el("button",{class:"btn sm danger", style:"margin-left:5px;", text:"지우기"});
+    xb.addEventListener("click", function(){
+      if(!confirm("정기전표 「"+(r.memo||"")+"」을 지웁니다." + "\n\n" + "이미 만들어진 전표는 그대로 남습니다.")) return;
+      recurList().splice(i,1); persistRecur(); render();
+    });
+    ta.appendChild(eb); ta.appendChild(pb); ta.appendChild(xb);
+    tr.appendChild(ta);
+    tb.appendChild(tr);
+    /* 분개 미리보기 */
+    (r.lines||[]).forEach(function(l){
+      var lr=el("tr");
+      var c1=el("td",{class:"mut", style:"padding-left:26px;font-size:12.5px;",
+                      text:accName(l.code)+(l.partner?"  ·  "+l.partner:"")});
+      c1.setAttribute("colspan","4");
+      lr.appendChild(c1);
+      lr.appendChild(el("td",{class:"n dr", style:"font-size:12.5px;", text:fmt(l.dr)}));
+      lr.appendChild(el("td",{class:"n cr", style:"font-size:12.5px;", text:fmt(l.cr)}));
+      lr.appendChild(el("td",{colspan:"2"}));
+      tb.appendChild(lr);
+    });
+  });
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  card.appendChild(el("div",{class:"note", text:
+    "매달 같은 모양으로 들어오는 거래를 등록해 둡니다. 그 달의 지정일이 지나면 「만들 때가 된 정기전표」로 올라오고, 눌러야 전표가 생깁니다 — 몰래 만들지 않습니다. 이미 만든 달은 다시 만들지 않고, 마감된 달에는 만들지 않습니다. 금액이 바뀌면 만들어진 전표를 고치시면 되고, 계속 바뀐 금액으로 쓰시려면 정기전표를 지우고 새로 등록하세요."}));
+  wrap.appendChild(card);
+  return wrap;
+}
 function viewProjects(){
   var wrap=el("div"), use=projectUsage();
 
@@ -3456,6 +3667,7 @@ function applySeed(seed){
   S.vat = (seed.vat && typeof seed.vat==="object") ? seed.vat : {};
   S.closes = (seed.closes && typeof seed.closes==="object") ? seed.closes : {};
   S.closeLog = Array.isArray(seed.closeLog) ? seed.closeLog : [];
+  S.recur = Array.isArray(seed.recur) ? seed.recur : [];
   splitVouchers((Array.isArray(seed.vouchers)?seed.vouchers:[]).concat(Array.isArray(seed.trash)?seed.trash:[]));
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
@@ -3468,7 +3680,7 @@ function saveAll(){
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
       partners:S.partners, projects:S.projects, vouchers:S.vouchers, trash:S.trash,
-      recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[],
+      recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[], recur:S.recur||[],
       seedStamp:S.seedStamp||"",
       savedAt:new Date().toISOString()
     }));
@@ -3485,7 +3697,7 @@ function loadAll(){
 
   if(!raw){
     if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.firstRun=true;
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.recur=[]; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
   }
@@ -3500,10 +3712,11 @@ function loadAll(){
     S.vat=(d.vat && typeof d.vat==="object")?d.vat:{};
     S.closes=(d.closes && typeof d.closes==="object")?d.closes:{};
     S.closeLog=Array.isArray(d.closeLog)?d.closeLog:[];
+    S.recur=Array.isArray(d.recur)?d.recur:[];
     S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[];
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.recur=[];
     S.dbState="저장된 자료를 읽지 못했습니다";
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
@@ -3541,6 +3754,7 @@ function persistAccounts(){ saveAll(); }
 function persistRecon(){ saveAll(); }
 function persistVat(){ saveAll(); }
 function persistCloses(){ saveAll(); }
+function persistRecur(){ saveAll(); }
 function persistVoucher(id, doc){
   putLocal(id, doc);
   S.firstRun=false; saveAll();
@@ -3550,6 +3764,7 @@ function backupJson(){
     app:"gongan-ledger", version:1, exportedAt:new Date().toISOString(),
     company:S.co, accounts:S.accounts, partners:S.partners, projects:S.projects,
     recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[],
+    recur:S.recur||[],
     vouchers:S.vouchers, trash:S.trash
   }, null, 1);
 }
@@ -3567,6 +3782,11 @@ function restoreJson(text){
   (d.partners||[]).forEach(function(p){ if(p && p.name && !ph[p.name]) S.partners.push(p); });
   var jh={}; S.projects.forEach(function(p){ jh[p.name]=1; });
   (d.projects||[]).forEach(function(p){ if(p && p.name && !jh[p.name]) S.projects.push(p); });
+  if(Array.isArray(d.recur) && d.recur.length){
+    if(!S.recur) S.recur=[];
+    var rh={}; S.recur.forEach(function(x){ rh[x.id]=1; });
+    d.recur.forEach(function(x){ if(x && x.id && !rh[x.id]) S.recur.push(x); });
+  }
   if(d.closes && typeof d.closes==="object"){
     if(!S.closes) S.closes={};
     Object.keys(d.closes).forEach(function(m){ if(!S.closes[m]) S.closes[m]=d.closes[m]; });
@@ -3612,13 +3832,14 @@ function pickBackup(){
 /* ---------- 렌더 ---------- */
 function renderView(){
   var v=$("#view"); v.innerHTML="";
-  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"대사", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
+  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"대사", recur:"정기전표", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
   var subs={
     entry:"대차가 맞을 때만 저장됩니다 · 저장 후에는 역분개로만 바로잡습니다",
     ledger:"삭제해도 기록은 지워지지 않습니다 · 「삭제이력」에서 되살릴 수 있습니다",
     pivot:"계정별 합계와, 계정마다 거래처별로 갈라 놓은 잔액입니다",
     fs:"집계표에서 자동으로 만들어집니다 · 재무상태표는 원하는 시점을 고르실 수 있습니다",
     recon:"통장·홈택스 자료와 장부를 맞춰 봅니다 · 전표는 건드리지 않습니다",
+    recur:"매달 같은 전표를 등록해 두고 버튼 한 번에 만듭니다",
     projects:"전표 줄마다 프로젝트를 달면 여기서 프로젝트별로 얼마인지 보입니다",
     partners:"등록해 두면 전표에서 이름만 골라도 사업자번호가 따라옵니다",
     accounts:"코드 앞 3자리가 더존 표준코드입니다",
@@ -3640,6 +3861,23 @@ function renderView(){
     acts.appendChild(el("span",{class:"tag "+(Math.abs(g.diff)<0.5?"g":"c"),
       text: Math.abs(g.diff)<0.5 ? "전체 대차 일치" : "전체 차액 "+fmt0(g.diff)}));
   }
+  if(S.view!=="recur"){
+    var rd=recurDue();
+    if(rd.length){
+      var rb0=el("div",{class:"banner w"});
+      rb0.innerHTML = svg("M10 5.6v4.6l3 1.8M10 3.2a6.8 6.8 0 100 13.6 6.8 6.8 0 000-13.6z",17)
+        + "<span><b>만들 때가 된 정기전표가 "+rd.length+"건 있습니다.</b> "
+        + esc(rd.slice(0,2).map(function(x){ return x.date+" "+(x.r.memo||""); }).join(" · "))
+        + (rd.length>2 ? " 외 "+(rd.length-2)+"건" : "") + "</span>";
+      var rsp=el("span",{style:"margin-left:auto;display:flex;gap:7px;flex:none;"});
+      var rb1=el("button",{class:"btn sm pri", text:"한꺼번에 만들기"});
+      rb1.addEventListener("click", makeAllRecur);
+      var rb2=el("button",{class:"btn sm", text:"보러 가기"});
+      rb2.addEventListener("click", function(){ if(!leaveEdit("recur")) return; S.view="recur"; render(); });
+      rsp.appendChild(rb1); rsp.appendChild(rb2); rb0.appendChild(rsp);
+      v.appendChild(rb0);
+    }
+  }
   if(S.seedUpdate){
     var sb=el("div",{class:"banner w"});
     sb.innerHTML = svg("M10 6.5v4.2M10 13.6h.01",17)
@@ -3660,6 +3898,7 @@ function renderView(){
   else if(S.view==="pivot") node=viewPivot();
   else if(S.view==="fs") node=viewFS();
   else if(S.view==="recon") node=viewRecon();
+  else if(S.view==="recur") node=viewRecur();
   else if(S.view==="projects") node=viewProjects();
   else if(S.view==="partners") node=viewPartners();
   else if(S.view==="accounts") node=viewAccounts();
