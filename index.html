@@ -115,6 +115,17 @@ input[type=number]{-moz-appearance:textfield;}
 .btn.sm{height:26px;padding:0 9px;font-size:11.5px;}
 .btn.danger{color:var(--crit);border-color:var(--rule);}
 .btn.danger:hover{background:var(--crit-soft);}
+.tabs{display:flex;gap:24px;border-bottom:1px solid var(--rule);margin-bottom:15px;flex-wrap:wrap;}
+.tabs button{background:none;border:0;padding:0 1px 10px;font-size:14.5px;font-weight:700;
+  color:var(--ink-3);cursor:pointer;position:relative;display:inline-flex;align-items:center;
+  gap:7px;letter-spacing:-.025em;}
+.tabs button:hover{color:var(--ink-2);}
+.tabs button.on{color:var(--accent-deep);}
+.tabs button.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2.5px;
+  background:var(--accent);border-radius:2px 2px 0 0;}
+.tabs button .c{font-family:var(--f-m);font-size:11px;font-weight:700;background:var(--surface-2);
+  color:var(--ink-3);border-radius:999px;padding:0 7px;line-height:17px;}
+.tabs button.on .c{background:var(--accent-soft);color:var(--accent-deep);}
 .seg{display:inline-flex;border:1px solid var(--rule);border-radius:6px;overflow:hidden;}
 .seg button{height:30px;padding:0 11px;border:0;background:var(--surface);font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer;}
 .seg button+button{border-left:1px solid var(--rule);}
@@ -221,7 +232,7 @@ table.fs tr.grp td{background:var(--surface-3);font-weight:600;color:var(--ink-2
 table.fs tr.hd td{font-weight:600;}
 table.fs tr.sub td:first-child{padding-left:30px;color:var(--ink-2);}
 table.fs tr.tot td.n{font-weight:700;letter-spacing:-.015em;}
-table.fs tr.tot td{border-top:1px solid var(--rule);border-bottom:2px solid var(--rule);background:var(--surface-3);font-weight:600;padding-top:8px;padding-bottom:8px;}
+table.fs tr.tot td{border-top:1px solid var(--rule);border-bottom:2px solid var(--rule);background:var(--surface-3);font-weight:700;font-size:14.5px;padding-top:9px;padding-bottom:9px;}
 table.fs.multi{min-width:100%;}
 table.fs.multi th{font-size:10.5px;font-family:var(--f-m);letter-spacing:.06em;
   color:var(--accent-deep);font-weight:600;padding:8px 14px;border-bottom:1px solid var(--rule);
@@ -232,6 +243,7 @@ table.fs.multi td.n{width:112px;min-width:96px;}
 table.fs.multi td.sum{font-weight:700;color:var(--accent-deep);background:var(--surface-3);}
 table.fs.multi tr.zero td.sum{color:var(--ink-4);font-weight:400;}
 table.fs.multi tr.tot td.sum{background:var(--accent-soft);}
+table.fs.multi tr.tot td,table.fs.two tr.tot td{font-size:14.5px;}
 table.fs.multi td:first-child{white-space:nowrap;}
 .plw{overflow-x:auto;border:0;border-radius:0;background:transparent;}
 table.fs.two th{font-size:10px;font-family:var(--f-m);letter-spacing:.1em;text-transform:uppercase;
@@ -288,10 +300,13 @@ body{background:var(--paper);}
 .wm small{color:var(--accent);font-weight:700;}
 .nav button{border-radius:11px;font-weight:600;letter-spacing:-.015em;}
 .nav button:hover{background:var(--accent-soft);color:var(--accent-deep);}
-.nav button.on{background:var(--accent);color:var(--on-accent);box-shadow:var(--sh-btn);}
-.nav button.on svg{color:var(--on-accent);}
-.nav .ct{background:rgba(255,255,255,.28);color:inherit;border-radius:999px;font-weight:700;}
-.nav button:not(.on) .ct{background:var(--accent-soft);color:var(--accent-deep);}
+.nav button{position:relative;}
+.nav button.on{background:var(--accent-soft);color:var(--accent-deep);box-shadow:none;}
+.nav button.on::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;
+  border-radius:0 3px 3px 0;background:var(--accent);}
+.nav button.on svg{color:var(--accent-deep);opacity:1;}
+.nav .ct{border-radius:999px;font-weight:700;background:var(--surface-2);color:var(--ink-3);}
+.nav button.on .ct{background:var(--accent);color:var(--on-accent);}
 .nav .ct.hot{background:var(--warn);color:#fff;}
 .nav button:not(.on) .ct.hot{background:var(--warn);color:#fff;}
 .per select{border-radius:var(--r-in);border-color:var(--rule);background:var(--surface);font-weight:600;color:var(--ink);}
@@ -494,7 +509,7 @@ var S = {
   db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
   trash:[],
   lastType:"은행거래", ldTab:"book", ldFocus:"",
-  closes:{}, closeLog:[], recur:[],
+  closes:{}, closeLog:[], closeOpen:false, recur:[],
   easy:{open:true, kind:"", date:"", partner:"", bizno:"", memo:"", acct:"", total:""},
   acct:"", acctP:"", pvTab:"acct", apAcct:"", apPartner:"", apZero:false,
   recon:{}, rcAcct:"", rcDate:"", rcTab:"bank",
@@ -950,10 +965,10 @@ function updateEasy(){
   var tb=el("tbody");
   built.lines.forEach(function(l){
     var tr=el("tr");
-    tr.appendChild(el("td",{class:"c", text:l.code?String(l.code).slice(0,3):"—"}));
+    tr.appendChild(el("td",{class:"c", text:l.code?String(l.code).slice(0,3):""}));
     tr.appendChild(el("td",{text:l.code?accName(l.code):"(고르지 않음)",
       style:l.code?"":"color:var(--warn);font-weight:600;"}));
-    tr.appendChild(el("td",{class:"mut", text:l.partner||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:l.partner||""}));
     tr.appendChild(el("td",{class:"mut", text:l.memo||E.memo||""}));
     tr.appendChild(el("td",{class:"n dr", text:fmt(l.dr)}));
     tr.appendChild(el("td",{class:"n cr", text:fmt(l.cr)}));
@@ -1211,8 +1226,8 @@ function viewEntry(){
       var amt=(v.lines||[]).reduce(function(s,l){ return s+(+l.dr||0); },0);
       var tr=el("tr");
       tr.appendChild(el("td",{class:"c", text:v.date}));
-      tr.appendChild(el("td",{},[el("span",{class:"tag b", text:v.type||"—"})]));
-      tr.appendChild(el("td",{class:"mut", text:v.memo||((v.lines||[])[0]||{}).memo||"—"}));
+      tr.appendChild(el("td",{},[el("span",{class:"tag b", text:v.type||""})]));
+      tr.appendChild(el("td",{class:"mut", text:v.memo||((v.lines||[])[0]||{}).memo||""}));
       tr.appendChild(el("td",{class:"n", text:fmt0(amt)}));
       var ta=el("td");
       var eb=el("button",{class:"btn sm", text:"복사"});
@@ -1514,8 +1529,8 @@ function historyCard(){
     tr.appendChild(el("td",{class:"c", text:v.date||""}));
     tr.appendChild(el("td",{class:"mut", text:v.memo||"(적요 없음)"}));
     tr.appendChild(el("td",{class:"n", text:fmt0(voucherAmount(v))}));
-    tr.appendChild(el("td",{class:"c", text:String(v.lastEditedAt||v.unlockedAt||v.updatedAt||"").slice(0,10)||"—"}));
-    tr.appendChild(el("td",{class:"mut", text:v.editNote||"—"}));
+    tr.appendChild(el("td",{class:"c", text:String(v.lastEditedAt||v.unlockedAt||v.updatedAt||"").slice(0,10)||""}));
+    tr.appendChild(el("td",{class:"mut", text:v.editNote||""}));
     var tdA=el("td");
     var b=el("button",{class:"btn sm", text:"전표 보기"});
     b.addEventListener("click", function(){
@@ -1567,12 +1582,12 @@ function trashCard(){
   var tb=el("tbody");
   list.forEach(function(v){
     var tr=el("tr");
-    tr.appendChild(el("td",{class:"c", text:String(v.deletedAt||"").slice(0,10)||"—"}));
+    tr.appendChild(el("td",{class:"c", text:String(v.deletedAt||"").slice(0,10)||""}));
     tr.appendChild(el("td",{class:"c", text:v.date||""}));
-    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:v.type||"—"})]));
+    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:v.type||""})]));
     tr.appendChild(el("td",{class:"mut", text:v.memo||"(적요 없음)"}));
     tr.appendChild(el("td",{class:"n", text:fmt0(voucherAmount(v))}));
-    tr.appendChild(el("td",{class:"mut", text:v.deleteNote||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:v.deleteNote||""}));
     var ta=el("td");
     var vb=el("button",{class:"btn sm", text:"내용 보기"});
     vb.addEventListener("click", function(){
@@ -1592,9 +1607,9 @@ function trashCard(){
 function viewLedger(){
   var wrap=el("div");
 
-  /* 전표장 / 수정이력 */
-  var tabs=el("div",{class:"ldbar"});
-  var tseg=el("span",{class:"seg"});
+  /* 전표장 / 수정이력 / 삭제이력 */
+  var tabs=el("div",{class:"tabs"});
+  var tseg=tabs;
   var counts={book:S.vouchers.length, hist:historyList().length, trash:S.trash.length};
   [["book","전표장"],["hist","수정이력"],["trash","삭제이력"]].forEach(function(p){
     var k=p[0];
@@ -1604,7 +1619,6 @@ function viewLedger(){
     b.addEventListener("click", function(){ S.ldTab=k; S.ldFocus=""; S.ldQ=""; renderView(); });
     tseg.appendChild(b);
   });
-  tabs.appendChild(tseg);
   wrap.appendChild(tabs);
   if(S.ldTab==="hist"){ wrap.appendChild(historyCard()); return wrap; }
   if(S.ldTab==="trash"){ wrap.appendChild(trashCard()); return wrap; }
@@ -1687,10 +1701,10 @@ function viewLedger(){
   list.forEach(function(v){
     var vd=voucherAmount(v);
     var gtr=el("tr",{class:"grp"});
-    var gtd=el("td",{colspan:"9", style:"background:var(--surface-3);padding:7px 12px;border-top:1px solid var(--rule-soft);"});
+    var gtd=el("td",{colspan:"9", style:"background:var(--surface-2);padding:11px 12px 10px;border-top:2px solid var(--rule);"});
     var box=el("div",{style:"display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12.5px;"});
     box.appendChild(el("span",{class:"m", style:"color:var(--ink-3);font-size:11.5px;", text:v.date}));
-    box.appendChild(el("span",{class:"tag b", text:v.type||"—"}));
+    box.appendChild(el("span",{class:"tag b", text:v.type||""}));
     box.appendChild(el("span",{style:"font-weight:600;", text:v.memo||"(적요 없음)"}));
     box.appendChild(el("span",{class:"m", style:"color:var(--ink-3);font-size:11.5px;", text:fmt0(vd)+"원"}));
     if(v.reverses) box.appendChild(el("span",{class:"tag c", text:"역분개"}));
@@ -1739,10 +1753,9 @@ function viewLedger(){
       tr.appendChild(el("td",{text:l.name||accName(l.code)}));
       var tdpj=el("td",{class:"mut"});
       if(l.project) tdpj.appendChild(el("span",{class:"tag b", text:l.project}));
-      else tdpj.appendChild(el("span",{class:"zero", text:"—"}));
       tr.appendChild(tdpj);
-      tr.appendChild(el("td",{class:"mut", text:l.partner||"—"}));
-      tr.appendChild(el("td",{class:"c", text:l.bizno||"—"}));
+      tr.appendChild(el("td",{class:"mut", text:l.partner||""}));
+      tr.appendChild(el("td",{class:"c", text:l.bizno||""}));
       tr.appendChild(el("td",{class:"mut", text:l.memo||""}));
       tr.appendChild(el("td",{class:"n dr", text:fmt(l.dr)}));
       tr.appendChild(el("td",{class:"n cr", text:fmt(l.cr)}));
@@ -1777,7 +1790,7 @@ function counterName(v, l){
     return d!==0 && (d>0)!==(mine>0);
   });
   if(!others.length) others=(v.lines||[]).filter(function(x){ return x!==l; });
-  if(!others.length) return "—";
+  if(!others.length) return "";
   if(others.length===1) return others[0].name||accName(others[0].code);
   return "제좌";
 }
@@ -1831,9 +1844,9 @@ function accountLedgerCard(code){
     run += dn ? (d-c) : (c-d);
     var tr=el("tr");
     tr.appendChild(el("td",{class:"c", text:r.v.date||""}));
-    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:r.v.type||"—"})]));
-    tr.appendChild(el("td",{class:"mut", text:r.l.memo||r.v.memo||"—"}));
-    tr.appendChild(el("td",{class:"mut", text:r.l.partner||"—"}));
+    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:r.v.type||""})]));
+    tr.appendChild(el("td",{class:"mut", text:r.l.memo||r.v.memo||""}));
+    tr.appendChild(el("td",{class:"mut", text:r.l.partner||""}));
     tr.appendChild(el("td",{class:"mut", text:counterName(r.v, r.l)}));
     tr.appendChild(el("td",{class:"n dr", text:fmt(d)}));
     tr.appendChild(el("td",{class:"n cr", text:fmt(c)}));
@@ -1959,7 +1972,7 @@ function viewAP(){
       else tdp.appendChild(el("span",{style:"font-weight:600;", text:p}));
       tr.appendChild(tdp);
       tr.appendChild(el("td",{class:"n mut", text:String(x.n)}));
-      tr.appendChild(el("td",{class:"c", text:x.last||"—"}));
+      tr.appendChild(el("td",{class:"c", text:x.last||""}));
       tr.appendChild(el("td",{class:"n dr", text:fmt(x.dr)}));
       tr.appendChild(el("td",{class:"n cr", text:fmt(x.cr)}));
       tr.appendChild(el("td",{class:"n"+(bal<0?" neg":""), style:"font-weight:600;", text:fmt0(bal)}));
@@ -1994,14 +2007,12 @@ function viewAP(){
 }
 function viewPivot(){
   var wrap=el("div");
-  var tabs=el("div",{class:"ldbar"});
-  var seg=el("span",{class:"seg"});
+  var tabs=el("div",{class:"tabs"});
   [["acct","계정별"],["ap","계정·거래처별"]].forEach(function(p){
     var b=el("button",{class:(S.pvTab===p[0]?"on":""), text:p[1]});
     b.addEventListener("click", function(){ S.pvTab=p[0]; S.acct=""; S.acctP=""; renderView(); });
-    seg.appendChild(b);
+    tabs.appendChild(b);
   });
-  tabs.appendChild(seg);
   wrap.appendChild(tabs);
   if(S.pvTab==="ap"){ wrap.appendChild(viewAP()); return wrap; }
   var m=tally(upToPeriod), keys=Object.keys(m).sort();
@@ -2435,8 +2446,8 @@ function viewVat(){
       });
       td0.appendChild(cb); tr.appendChild(td0);
       tr.appendChild(el("td",{class:"c", text:b.date}));
-      tr.appendChild(el("td",{class:"mut", text:b.partner||"—"}));
-      tr.appendChild(el("td",{class:"mut", text:b.memo||"—"}));
+      tr.appendChild(el("td",{class:"mut", text:b.partner||""}));
+      tr.appendChild(el("td",{class:"mut", text:b.memo||""}));
       tr.appendChild(el("td",{class:"mut", text:b.hint}));
       tr.appendChild(el("td",{class:"n", text:fmt0(b.tax)}));
       tb3.appendChild(tr);
@@ -2474,8 +2485,8 @@ function viewVat(){
       td0.appendChild(cb); tr.appendChild(td0);
       tr.appendChild(el("td",{class:"c", text:x.date}));
       tr.appendChild(el("td",{},[el("span",{class:"tag b", text:(raw.sale.indexOf(x)>=0?"매출":"매입")})]));
-      tr.appendChild(el("td",{class:"mut", text:x.partner||"—"}));
-      tr.appendChild(el("td",{class:"mut", text:x.memo||"—"}));
+      tr.appendChild(el("td",{class:"mut", text:x.partner||""}));
+      tr.appendChild(el("td",{class:"mut", text:x.memo||""}));
       tr.appendChild(el("td",{class:"n"+(x.tax<0?" neg":""), text:fmt0(x.tax)}));
       tb5.appendChild(tr);
     });
@@ -2554,9 +2565,9 @@ function viewVat(){
         rows.forEach(function(r){
           var row = r.b ? r.b : r;
           var tr=el("tr");
-          tr.appendChild(el("td",{class:"c", text:row.date||"—"}));
-          tr.appendChild(el("td",{class:"mut", text:row.partner||row.name||"—"}));
-          tr.appendChild(el("td",{class:"c", text:row.biz?bizFormat(row.biz):"—"}));
+          tr.appendChild(el("td",{class:"c", text:row.date||""}));
+          tr.appendChild(el("td",{class:"mut", text:row.partner||row.name||""}));
+          tr.appendChild(el("td",{class:"c", text:row.biz?bizFormat(row.biz):""}));
           if(r.b){
             var tdD=el("td",{class:"mut"});
             tdD.appendChild(el("span",{text:"장부 "+fmt0(r.b.tax)+" · 홈택스 "+fmt0(r.h.tax)+" · 차이 "}));
@@ -2643,14 +2654,12 @@ function viewVat(){
 
 function viewRecon(){
   var wrap=el("div");
-  var tabs=el("div",{class:"ldbar"});
-  var seg=el("span",{class:"seg"});
+  var tabs=el("div",{class:"tabs"});
   [["bank","은행 대사"],["vat","부가세 대사"]].forEach(function(p){
     var b=el("button",{class:(S.rcTab===p[0]?"on":""), text:p[1]});
     b.addEventListener("click", function(){ S.rcTab=p[0]; renderView(); });
-    seg.appendChild(b);
+    tabs.appendChild(b);
   });
-  tabs.appendChild(seg);
   wrap.appendChild(tabs);
   wrap.appendChild(S.rcTab==="vat" ? viewVat() : viewBankRecon());
   return wrap;
@@ -2781,8 +2790,8 @@ function viewBankRecon(){
     });
     tdC.appendChild(cb); tr.appendChild(tdC);
     tr.appendChild(el("td",{class:"c", text:r.v.date||""}));
-    tr.appendChild(el("td",{class:"mut", text:r.l.memo||r.v.memo||"—"}));
-    tr.appendChild(el("td",{class:"mut", text:r.l.partner||"—"}));
+    tr.appendChild(el("td",{class:"mut", text:r.l.memo||r.v.memo||""}));
+    tr.appendChild(el("td",{class:"mut", text:r.l.partner||""}));
     tr.appendChild(el("td",{class:"mut", text:counterName(r.v, r.l)}));
     tr.appendChild(el("td",{class:"n dr", text:fmt(d)}));
     tr.appendChild(el("td",{class:"n cr", text:fmt(c)}));
@@ -2998,14 +3007,28 @@ function blockIfClosed(v, what){
   return true;
 }
 function closeCard(){
-  var card=el("div",{class:"card", style:"margin-bottom:16px;"});
   var cnt={};
   S.vouchers.forEach(function(v){ var m=ym(v.date); if(m) cnt[m]=(cnt[m]||0)+1; });
-  var ms=bsMonths(), nClosed=0;
-  ms.forEach(function(m){ if((S.closes||{})[m]) nClosed++; });
+  var ms=bsMonths(), closed=[];
+  ms.forEach(function(m){ if((S.closes||{})[m]) closed.push(m); });
+  if(!S.closeOpen){
+    var bar=el("div",{class:"ldbar", style:"margin-top:18px;"});
+    bar.appendChild(el("span",{class:"tag "+(closed.length?"g":"b"),
+      text: closed.length ? ("잠긴 달 — "+closed.map(monthName).join(", ")) : "잠근 달이 없습니다"}));
+    var ob=el("button",{class:"btn sm", text:"기간 마감 열기"});
+    ob.addEventListener("click", function(){ S.closeOpen=true; renderView(); });
+    bar.appendChild(ob);
+    return bar;
+  }
+  var card=el("div",{class:"card", style:"margin-top:18px;"});
+  var nClosed=closed.length;
+  var chr0=el("span",{class:"r"});
+  chr0.appendChild(el("span",{class:"tag "+(nClosed?"g":"b"), text: nClosed ? (nClosed+"개 달이 잠겨 있습니다") : "잠근 달이 없습니다"}));
+  var fb=el("button",{class:"btn sm", text:"접기"});
+  fb.addEventListener("click", function(){ S.closeOpen=false; renderView(); });
+  chr0.appendChild(fb);
   card.appendChild(el("div",{class:"ch"},[
-    el("span",{text:"기간 마감"}),
-    el("span",{class:"tag "+(nClosed?"g":"b"), text: nClosed ? (nClosed+"개 달이 잠겨 있습니다") : "잠근 달이 없습니다"})
+    el("span",{text:"기간 마감"}), chr0
   ]));
   var tw=el("div",{class:"tw", style:"border:0;border-radius:0;"}), tab=el("table");
   tab.innerHTML='<thead><tr><th style="width:130px">달</th><th class="n" style="width:90px">전표</th><th style="width:90px">상태</th><th style="width:120px">마감한 날</th><th></th></tr></thead>';
@@ -3013,11 +3036,11 @@ function closeCard(){
   ms.forEach(function(m){
     var c=(S.closes||{})[m], tr=el("tr");
     tr.appendChild(el("td",{class:"c", style:"font-weight:600;", text:monthName(m)}));
-    tr.appendChild(el("td",{class:"n"+(cnt[m]?"":" zero"), text:cnt[m]?String(cnt[m]):"—"}));
+    tr.appendChild(el("td",{class:"n"+(cnt[m]?"":" zero"), text:cnt[m]?String(cnt[m]):""}));
     var tdS=el("td");
     tdS.appendChild(el("span",{class:"tag "+(c?"g":"b"), text:c?"마감":"열림"}));
     tr.appendChild(tdS);
-    tr.appendChild(el("td",{class:"c mut", text:c?String(c.at||"").slice(0,10):"—"}));
+    tr.appendChild(el("td",{class:"c mut", text:c?String(c.at||"").slice(0,10):""}));
     var ta=el("td");
     var b=el("button",{class:"btn sm"+(c?"":" pri"), text:c?"마감 풀기":"마감"});
     b.addEventListener("click", function(){ if(c) reopenMonth(m); else closeMonth(m); });
@@ -3040,7 +3063,6 @@ function closeCard(){
 }
 function viewFS(){
   var wrap=el("div");
-  wrap.appendChild(closeCard());
   var grid=el("div",{class:"fs2"});
   var asOf = S.bsAsOf || (S.period==="all" ? "" : S.period);
   var bs = buildBS(asOf);
@@ -3166,6 +3188,7 @@ function viewFS(){
     + "맨 오른쪽 「누계」는 사업연도 시작부터 더한 값이고, 그 아래 당기순손익이 재무상태표의 이익잉여금과 같습니다."}));
   grid.appendChild(cP);
   wrap.appendChild(grid);
+  wrap.appendChild(closeCard());
   return wrap;
 }
 
@@ -3309,7 +3332,7 @@ function viewRecur(){
     td0.appendChild(el("span",{style:"font-weight:600;", text:r.memo||"(이름 없음)"}));
     if(r.off) td0.appendChild(el("span",{class:"tag w", style:"margin-left:6px;", text:"멈춤"}));
     tr.appendChild(td0);
-    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:r.type||"—"})]));
+    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:r.type||""})]));
     tr.appendChild(el("td",{class:"c", text:"매달 "+r.day+"일"}));
     tr.appendChild(el("td",{class:"c mut", text:(r.from||"")+(r.to?" ~ "+r.to:" ~")}));
     tr.appendChild(el("td",{class:"n", text:fmt0(recurAmount(r))}));
@@ -3417,11 +3440,11 @@ function viewProjects(){
     var tr=el("tr");
     tr.appendChild(el("td",{style:"font-weight:600;", text:p.name}));
     tr.appendChild(el("td",{class:"mut", text:p.memo||""}));
-    tr.appendChild(el("td",{class:"n"+(u.n?"":" zero"), text:u.n?String(u.n):"—"}));
-    tr.appendChild(el("td",{class:"n"+(u.dr?" dr":" zero"), text:u.dr?fmt0(u.dr):"—"}));
-    tr.appendChild(el("td",{class:"n"+(u.cr?" cr":" zero"), text:u.cr?fmt0(u.cr):"—"}));
-    tr.appendChild(el("td",{class:"n"+(u.pl<0?" neg":"")+(u.pl?"":" zero"), text:u.pl?fmt0(u.pl):"—"}));
-    tr.appendChild(el("td",{class:"c", text:u.last||"—"}));
+    tr.appendChild(el("td",{class:"n"+(u.n?"":" zero"), text:u.n?String(u.n):""}));
+    tr.appendChild(el("td",{class:"n"+(u.dr?" dr":" zero"), text:u.dr?fmt0(u.dr):""}));
+    tr.appendChild(el("td",{class:"n"+(u.cr?" cr":" zero"), text:u.cr?fmt0(u.cr):""}));
+    tr.appendChild(el("td",{class:"n"+(u.pl<0?" neg":"")+(u.pl?"":" zero"), text:u.pl?fmt0(u.pl):""}));
+    tr.appendChild(el("td",{class:"c", text:u.last||""}));
     var ta=el("td");
     var eb=el("button",{class:"btn sm", text:"수정"});
     eb.addEventListener("click", function(){
@@ -3522,13 +3545,12 @@ function viewPartners(){
       tdB.appendChild(el("span",{text:bizFormat(p.bizno)}));
       if(!bizValid(p.bizno)) tdB.appendChild(el("span",{class:"tag c", style:"margin-left:6px;", text:"검증 실패"}));
     } else {
-      tdB.appendChild(el("span",{class:"zero", text:"—"}));
     }
     tr.appendChild(tdB);
     tr.appendChild(el("td",{},[el("span",{class:"tag b", text:p.kind||"기타"})]));
     tr.appendChild(el("td",{class:"mut", text:p.memo||""}));
-    tr.appendChild(el("td",{class:"n"+(u.n?"":" zero"), text:u.n?String(u.n):"—"}));
-    tr.appendChild(el("td",{class:"c", text:u.last||"—"}));
+    tr.appendChild(el("td",{class:"n"+(u.n?"":" zero"), text:u.n?String(u.n):""}));
+    tr.appendChild(el("td",{class:"c", text:u.last||""}));
     var ta=el("td");
     var eb=el("button",{class:"btn sm", text:"수정"});
     eb.addEventListener("click", function(){
@@ -3583,7 +3605,7 @@ function viewAccounts(){
     tr.appendChild(el("td",{class:"c", style:"color:var(--ink-2);font-weight:600;", text:a.code.slice(0,3)}));
     tr.appendChild(el("td",{text:a.name}));
     tr.appendChild(el("td",{},[el("span",{class:"tag b", text:c.name})]));
-    tr.appendChild(el("td",{class:"n"+(b<0?" neg":"")+(used?"":" zero"), text:used?fmt0(b):"—"}));
+    tr.appendChild(el("td",{class:"n"+(b<0?" neg":"")+(used?"":" zero"), text:used?fmt0(b):""}));
     var ta=el("td");
     var rn=el("button",{class:"btn sm", text:"이름"});
     rn.addEventListener("click", function(){
