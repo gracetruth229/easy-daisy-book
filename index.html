@@ -3614,7 +3614,7 @@ function docForm(d, isNew){
   function inp(key, ph, type, w){
     var e=el("input",{type:type||"text", value:d[key]||"", placeholder:ph||""});
     if(type==="number") e.className="num";
-    e.addEventListener("input", function(){ d[key]=e.value; if(key==="amtFx"||key==="fx") calc(); });
+    e.addEventListener("input", function(){ d[key]=e.value; });
     return e;
   }
   fld("증빙일", inp("date","","date"));
@@ -3628,15 +3628,52 @@ function docForm(d, isNew){
   sk.addEventListener("change", function(){ d.kind=sk.value; });
   fld("증빙 종류", sk, "150px");
   fld("인보이스 번호", inp("no","예) INV-2026-0912"), "170px");
-  fld("통화", inp("cur","USD"), "80px");
-  var fxA=fld("외화 금액", inp("amtFx","20.00","number"), "120px");
-  var fxR=fld("환율", inp("fx","1380","number"), "100px");
-  var amt=fld("원화 금액 (장부에 들어갈 금액)", inp("amt","","number"), "170px");
-  function calc(){
-    var a=parseFloat(d.amtFx), r=parseFloat(d.fx);
-    if(a && r && !d._touched){ d.amt=String(Math.round(a*r)); amt.value=d.amt; }
+  var iCur=fld("통화", inp("cur","USD"), "80px");
+  iCur.addEventListener("input", function(){ recalc(""); });
+
+  /* 외화·환율·원화 — 둘을 넣으면 나머지 하나를 계산한다 */
+  var MK=["amtFx","fx","amt"], mi={}, ml={};
+  function money(key, label, ph, w){
+    var e=el("input",{type:"number", step:"any", class:"num",
+                      value:d[key]||"", placeholder:ph||""});
+    e.style.width=w;
+    e.addEventListener("input", function(){ d[key]=e.value; recalc(key); });
+    var f=el("div",{class:"f"}), lab=el("label",{text:label});
+    f.appendChild(lab); f.appendChild(e); g.appendChild(f);
+    mi[key]=e; ml[key]=label;
+    return e;
   }
-  amt.addEventListener("input", function(){ d._touched=true; });
+  function round2(x){ return Math.round(x*100)/100; }
+  /* 외화와 원화는 둘 다 사실이고, 계산되는 것은 환율이다.
+     환율을 직접 고쳤을 때만 원화(또는 외화)를 다시 낸다. */
+  function recalc(edited){
+    var a=parseFloat(d.amtFx), r=parseFloat(d.fx), w=parseFloat(d.amt), out="";
+    if(edited==="fx"){
+      if(a>0 && r>0){ d.amt=String(Math.round(a*r)); out="amt"; }
+      else if(w>0 && r>0){ d.amtFx=String(round2(w/r)); out="amtFx"; }
+    } else {
+      if(a>0 && w>0){ d.fx=String(round2(w/a)); out="fx"; }
+      else if(edited==="amtFx" && a>0 && r>0){ d.amt=String(Math.round(a*r)); out="amt"; }
+      else if(edited==="amt" && w>0 && r>0){ d.amtFx=String(round2(w/r)); out="amtFx"; }
+    }
+    MK.forEach(function(k){
+      if(k!==edited && mi[k]) mi[k].value=(d[k]===undefined||d[k]===null)?"":d[k];
+      var lab=[].slice.call(g.querySelectorAll("label")).filter(function(x){
+        return x.textContent===ml[k] || x.textContent===ml[k]+"  · 자동";
+      })[0];
+      if(lab) lab.textContent = ml[k] + (k===out ? "  · 자동" : "");
+    });
+    var hint=$("#fxHint");
+    if(hint){
+      var a2=parseFloat(d.amtFx), r2=parseFloat(d.fx), w2=parseFloat(d.amt);
+      hint.textContent = (a2>0 && r2>0 && w2>0)
+        ? ((d.cur||"USD")+" "+a2.toLocaleString("en-US")+" × "+r2.toLocaleString("ko-KR")+" = "+fmt0(w2)+"원")
+        : "외화 금액과 원화 금액을 넣으면 환율이 나오고, 환율을 직접 넣으면 원화가 나옵니다. 어느 칸이든 고치실 수 있습니다.";
+    }
+  }
+  money("amtFx","외화 금액","20.00","120px");
+  money("fx","환율","1380","110px");
+  money("amt","원화 금액 (장부에 들어갈 금액)","","170px");
   var sv=el("select",{});
   DOCVAT.forEach(function(x){ sv.appendChild(el("option",{value:x.v, text:x.t+" — "+x.why})); });
   sv.value=d.vat||"none";
@@ -3649,6 +3686,8 @@ function docForm(d, isNew){
   fld("결제수단", sp, "110px");
   fld("적요", inp("memo","무엇에 쓴 돈인지"), "260px");
   card.appendChild(g);
+  card.appendChild(el("div",{class:"note", id:"fxHint", style:"border-top:0;padding-top:0;padding-bottom:12px;", text:""}));
+  setTimeout(function(){ recalc(""); }, 0);
 
   var bar=el("div",{class:"sumbar"});
   var fb=el("button",{class:"btn sm", html:svg("M10 13V4M6.5 7.5L10 4l3.5 3.5M4 15.5h12",13)+"<span>파일 붙이기</span>"});
@@ -3660,7 +3699,7 @@ function docForm(d, isNew){
   ok.addEventListener("click", function(){
     if(!d.vendor && !d.memo){ toast("거래처나 적요 중 하나는 넣어 주세요"); return; }
     if(!docAmount(d)){ toast("원화 금액을 넣어 주세요"); return; }
-    delete d._touched;
+    delete d._touched; delete d._order;
     docSave(d); S.docEdit=null;
     toast(isNew?"증빙을 등록했습니다":"고쳤습니다");
     render();
