@@ -389,7 +389,7 @@ table.fs.two td.n:last-child{color:var(--accent-deep);}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="./firebase-config.js"></script>
+<script src="./firebase-config.js?v=1789026255"></script>
 </head>
 <body>
 <div id="gate"></div>
@@ -4997,8 +4997,13 @@ function loadMembers(){
 /* ---------- 시작 ---------- */
 function boot(){
   try{
-    var saved=localStorage.getItem("gongan-fbconf");
-    if(!FBCONF && saved) FBCONF=JSON.parse(saved);
+    if(FBCONF && FBCONF.apiKey){
+      /* 파일에 설정이 있으면 예전에 넣어 둔 것은 지운다 — 옛 값이 남아 헷갈리지 않게 */
+      localStorage.removeItem("gongan-fbconf");
+    } else {
+      var saved=localStorage.getItem("gongan-fbconf");
+      if(saved) FBCONF=JSON.parse(saved);
+    }
   }catch(e){}
   if(!fbSet()){ showSetup(); return; }
   try{
