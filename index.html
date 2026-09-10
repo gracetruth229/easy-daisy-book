@@ -495,6 +495,7 @@ var VIEWS = [
   {k:"pivot",    t:"집계표",    ic:"M3 16.4h14M5.6 16.4V9.6M10 16.4V4.4M14.4 16.4v-4.6"},
   {k:"fs",       t:"재무제표",  ic:"M5 3h10v14H5zM8 7h4M8 10h4M8 13h2"},
   {k:"recon",    t:"대사",  ic:"M3.5 7.5h13v8a1 1 0 01-1 1h-11a1 1 0 01-1-1zM3.5 7.5L10 3.5l6.5 4M7 12.2l2 2 4-4.2"},
+  {k:"docs",     t:"증빙함",    ic:"M5 3.5h6.5L15 7v9.5H5zM11.5 3.5V7H15M7.5 10.5h5M7.5 13h3"},
   {k:"recur",    t:"정기전표",  ic:"M4 7.5a6.5 6.5 0 0111.4-4.2M16 5.5V2.6M16 12.5a6.5 6.5 0 01-11.4 4.2M4 14.5v2.9"},
   {k:"projects", t:"프로젝트",  ic:"M3.5 6.5h5l1.6 2h10.4v9a1.6 1.6 0 01-1.6 1.6H5.1A1.6 1.6 0 013.5 17.5z"},
   {k:"partners", t:"거래처",    ic:"M7 9.2a2.6 2.6 0 100-5.2 2.6 2.6 0 000 5.2zM2.6 16.4c0-2.6 2-4.2 4.4-4.2s4.4 1.6 4.4 4.2M13.4 8.6a2.2 2.2 0 100-4.4M14.2 12.4c2 .3 3.2 1.8 3.2 4"},
@@ -510,6 +511,7 @@ var S = {
   trash:[],
   lastType:"은행거래", ldTab:"book", ldFocus:"",
   closes:{}, closeLog:[], closeOpen:false, recur:[],
+  docs:[], docEdit:null, docOpen:"", docLink:"",
   easy:{open:true, kind:"", date:"", partner:"", bizno:"", memo:"", acct:"", total:""},
   acct:"", acctP:"", pvTab:"acct", apAcct:"", apPartner:"", apZero:false,
   recon:{}, rcAcct:"", rcDate:"", rcTab:"bank",
@@ -701,6 +703,7 @@ function renderNav(){
     if(v.k==="partners") ct=String(S.partners.length);
     if(v.k==="projects") ct=String(S.projects.length);
     var hot=false;
+    if(v.k==="docs") ct=String(docList().length||"");
     if(v.k==="recur"){
       var dn=recurDue().length;
       hot = dn>0;
@@ -1441,6 +1444,10 @@ function saveDraft(){
     }
   }
   persistVoucher(id, doc);
+  if(S.docLink){
+    docList().forEach(function(x){ if(x.id===S.docLink) x.voucherId=id; });
+    persistDocs(); S.docLink="";
+  }
   var wasEdit=!!S.editId;
   S.lastType=d.type||S.lastType;
   S.editId=null; S.draft=newDraft();
@@ -1713,6 +1720,15 @@ function viewLedger(){
     if(v.deleted) box.appendChild(el("span",{class:"tag c", text:"장부에서 뺀 전표 · "+String(v.deletedAt||"").slice(0,10)}));
     var vClosed=isClosed(v.date);
     if(vClosed) box.appendChild(el("span",{class:"tag g", text:"마감된 달"}));
+    var vdocs=docsOfVoucher(v.id);
+    if(vdocs.length){
+      var dtag=el("button",{class:"tag d", style:"border:0;cursor:pointer;", text:"증빙 "+vdocs.length+"건"});
+      dtag.addEventListener("click", function(){
+        if(!leaveEdit("docs")) return;
+        S.ldQ=""; S.docOpen=vdocs[0].id; S.view="docs"; render();
+      });
+      box.appendChild(dtag);
+    }
 
     var sp=el("span",{style:"margin-left:auto;display:flex;gap:6px;"});
     if(v.deleted){
@@ -3390,6 +3406,377 @@ function viewRecur(){
   wrap.appendChild(card);
   return wrap;
 }
+/* ---------- 증빙함 ---------- */
+var DOCKINDS = ["해외 인보이스","간이영수증","카드매출전표","청구서","계약서","기타"];
+var DOCVAT = [
+  {v:"none", t:"부가세 없음",   why:"해외 사업자라 부가세가 붙지 않음"},
+  {v:"nodeduct", t:"불공제",    why:"세금계산서가 없어 매입세액을 공제받지 못함"},
+  {v:"agent", t:"대리납부 대상", why:"전자적 용역 · 사업자가 대신 신고·납부"}
+];
+function docList(){ return Array.isArray(S.docs) ? S.docs : (S.docs=[]); }
+function docVatLabel(v){
+  for(var i=0;i<DOCVAT.length;i++) if(DOCVAT[i].v===v) return DOCVAT[i].t;
+  return "";
+}
+
+/* --- 파일 보관 (IndexedDB) --- */
+var IDB=null;
+function idb(){
+  if(IDB) return IDB;
+  IDB = new Promise(function(res, rej){
+    try{
+      if(!window.indexedDB){ rej(new Error("no-idb")); return; }
+      var q=indexedDB.open("gongan-docs", 1);
+      q.onupgradeneeded=function(){ q.result.createObjectStore("files"); };
+      q.onsuccess=function(){ res(q.result); };
+      q.onerror=function(){ rej(q.error); };
+    }catch(e){ rej(e); }
+  });
+  return IDB;
+}
+function idbRun(mode, fn){
+  return idb().then(function(db){
+    return new Promise(function(res, rej){
+      var t=db.transaction("files", mode), st=t.objectStore("files"), out=null;
+      out=fn(st);
+      t.oncomplete=function(){ res(out && out.result!==undefined ? out.result : out); };
+      t.onerror=function(){ rej(t.error); };
+    });
+  });
+}
+function fileSave(key, blob){ return idbRun("readwrite", function(st){ return st.put(blob, key); }); }
+function fileLoad(key){ return idbRun("readonly", function(st){ return st.get(key); }); }
+function fileDrop(key){ return idbRun("readwrite", function(st){ return st.delete(key); }); }
+function humanSize(n){
+  n=+n||0;
+  if(n<1024) return n+"B";
+  if(n<1024*1024) return Math.round(n/1024)+"KB";
+  return (n/1048576).toFixed(1)+"MB";
+}
+
+/* --- 등록·수정 --- */
+function blankDoc(){
+  return {id:"D"+Date.now().toString(36), date:todayISO(), paidDate:"", vendor:"", no:"",
+          kind:"해외 인보이스", cur:"USD", amtFx:"", fx:"", amt:"", vat:"none",
+          pay:"카드", memo:"", voucherId:"", files:[]};
+}
+function docAmount(d){ return +d.amt||0; }
+function docSave(d){
+  var i=-1;
+  docList().forEach(function(x,k){ if(x.id===d.id) i=k; });
+  if(i>=0) docList()[i]=d; else docList().push(d);
+  docList().sort(function(a,b){ return String(b.date).localeCompare(String(a.date)); });
+  persistDocs();
+}
+function docFromDraft(d){
+  /* 증빙으로 전표 만들기 */
+  if(!leaveEdit("entry")) return;
+  var built=buildFromKind("buy_none", docAmount(d), {partner:d.vendor, memo:d.memo||d.no||d.kind});
+  S.editId=null;
+  S.draft={date:d.paidDate||d.date, type:built.type, memo:(d.vendor?d.vendor+" ":"")+(d.memo||d.kind), lines:built.lines};
+  S.docLink=d.id;
+  S.view="entry"; render();
+  toast("증빙으로 전표를 채웠습니다 — 계정과목만 고르고 저장하세요");
+}
+function docsOfVoucher(id){
+  return docList().filter(function(d){ return d.voucherId===id; });
+}
+async function docPickFiles(d){
+  var inp=document.createElement("input");
+  inp.type="file"; inp.multiple=true;
+  inp.accept="image/*,application/pdf,.pdf,.png,.jpg,.jpeg,.heic,.webp";
+  inp.style.display="none";
+  inp.addEventListener("change", async function(){
+    var fl=inp.files; if(!fl || !fl.length){ inp.remove(); return; }
+    var n=0;
+    for(var i=0;i<fl.length;i++){
+      var f=fl[i];
+      if(f.size > 20*1024*1024){ toast("「"+f.name+"」은 20MB가 넘어 건너뜁니다"); continue; }
+      var key=d.id+"-"+Date.now().toString(36)+"-"+i;
+      try{
+        await fileSave(key, f);
+        d.files.push({id:key, name:f.name, type:f.type||"", size:f.size});
+        n++;
+      }catch(e){ toast("파일을 저장하지 못했습니다 — 이 브라우저에서는 첨부를 쓸 수 없습니다"); break; }
+    }
+    if(n){ docSave(d); toast(n+"개를 붙였습니다"); render(); }
+    inp.remove();
+  });
+  document.body.appendChild(inp); inp.click();
+}
+async function docShowFile(f){
+  var box=$("#docPv-"+f.id);
+  if(!box) return;
+  if(box.innerHTML){ box.innerHTML=""; return; }
+  try{
+    var blob=await fileLoad(f.id);
+    if(!blob){ box.textContent="파일을 찾지 못했습니다"; return; }
+    if(String(f.type).indexOf("image")===0){
+      var url=URL.createObjectURL(blob);
+      var img=el("img",{src:url, style:"max-width:100%;max-height:420px;border-radius:10px;border:1px solid var(--rule);margin-top:8px;"});
+      box.appendChild(img);
+    } else {
+      box.appendChild(el("div",{class:"note", style:"border:0;padding:8px 0 0;",
+        text:"이 형식은 화면에서 바로 못 봅니다. 「내려받기」로 여세요."}));
+    }
+  }catch(e){ box.textContent="파일을 읽지 못했습니다"; }
+}
+async function docDownload(f){
+  try{
+    var blob=await fileLoad(f.id);
+    if(!blob){ toast("파일을 찾지 못했습니다"); return; }
+    saveFile(f.name||"증빙", blob);
+  }catch(e){ toast("파일을 읽지 못했습니다"); }
+}
+async function docZip(){
+  var list=docList().filter(function(d){ return (d.files||[]).length; });
+  if(!list.length){ toast("붙여 둔 파일이 없습니다"); return; }
+  var files=[], seen={};
+  toast("증빙 파일을 모으는 중…");
+  for(var i=0;i<list.length;i++){
+    var d=list[i];
+    for(var j=0;j<d.files.length;j++){
+      var f=d.files[j];
+      try{
+        var blob=await fileLoad(f.id);
+        if(!blob) continue;
+        var buf=new Uint8Array(await blob.arrayBuffer());
+        var base=(d.date||"")+"_"+(d.vendor||"거래처")+"_"+(f.name||"file");
+        base=base.replace(/[\\/:*?"<>|]/g,"-");
+        while(seen[base]) base="_"+base;
+        seen[base]=1;
+        files.push({name:base, data:buf});
+      }catch(e){}
+    }
+  }
+  if(!files.length){ toast("읽을 수 있는 파일이 없습니다"); return; }
+  files.push({name:"증빙목록.csv", data:new TextEncoder().encode(csvOf(rowsDocs()))});
+  saveFile("증빙함_"+todayISO()+".zip", zipStore(files).buffer);
+}
+function rowsDocs(){
+  var out=[["증빙일","결제일","거래처","증빙종류","번호","통화","외화금액","환율","원화금액","부가세","결제수단","적요","전표","파일수"]];
+  docList().forEach(function(d){
+    out.push([d.date, d.paidDate||"", d.vendor||"", d.kind||"", d.no||"", d.cur||"",
+              d.amtFx||"", d.fx||"", docAmount(d), docVatLabel(d.vat), d.pay||"",
+              d.memo||"", d.voucherId||"", (d.files||[]).length]);
+  });
+  return out;
+}
+
+function docForm(d, isNew){
+  var card=el("div",{class:"card", style:"margin-bottom:16px;"});
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:isNew?"증빙 등록":"증빙 고치기"}),
+    el("span",{class:"tag b", text:"세금계산서가 없는 거래를 여기에 남깁니다"})
+  ]));
+  var g=el("div",{class:"rcgrid"});
+  function fld(label, node, w){
+    var f=el("div",{class:"f"});
+    f.appendChild(el("label",{text:label}));
+    if(w) node.style.width=w;
+    f.appendChild(node); g.appendChild(f); return node;
+  }
+  function inp(key, ph, type, w){
+    var e=el("input",{type:type||"text", value:d[key]||"", placeholder:ph||""});
+    if(type==="number") e.className="num";
+    e.addEventListener("input", function(){ d[key]=e.value; if(key==="amtFx"||key==="fx") calc(); });
+    return e;
+  }
+  fld("증빙일", inp("date","","date"));
+  fld("결제일 (없으면 비워 두세요)", inp("paidDate","","date"));
+  var iv=inp("vendor","예) Vercel Inc.");
+  iv.setAttribute("list","partnerNames");
+  fld("거래처", iv, "180px");
+  var sk=el("select",{});
+  DOCKINDS.forEach(function(k){ sk.appendChild(el("option",{value:k, text:k})); });
+  sk.value=d.kind||DOCKINDS[0];
+  sk.addEventListener("change", function(){ d.kind=sk.value; });
+  fld("증빙 종류", sk, "150px");
+  fld("인보이스 번호", inp("no","예) INV-2026-0912"), "170px");
+  fld("통화", inp("cur","USD"), "80px");
+  var fxA=fld("외화 금액", inp("amtFx","20.00","number"), "120px");
+  var fxR=fld("환율", inp("fx","1380","number"), "100px");
+  var amt=fld("원화 금액 (장부에 들어갈 금액)", inp("amt","","number"), "170px");
+  function calc(){
+    var a=parseFloat(d.amtFx), r=parseFloat(d.fx);
+    if(a && r && !d._touched){ d.amt=String(Math.round(a*r)); amt.value=d.amt; }
+  }
+  amt.addEventListener("input", function(){ d._touched=true; });
+  var sv=el("select",{});
+  DOCVAT.forEach(function(x){ sv.appendChild(el("option",{value:x.v, text:x.t+" — "+x.why})); });
+  sv.value=d.vat||"none";
+  sv.addEventListener("change", function(){ d.vat=sv.value; });
+  fld("부가세", sv, "300px");
+  var sp=el("select",{});
+  ["카드","계좌이체","현금","기타"].forEach(function(x){ sp.appendChild(el("option",{value:x, text:x})); });
+  sp.value=d.pay||"카드";
+  sp.addEventListener("change", function(){ d.pay=sp.value; });
+  fld("결제수단", sp, "110px");
+  fld("적요", inp("memo","무엇에 쓴 돈인지"), "260px");
+  card.appendChild(g);
+
+  var bar=el("div",{class:"sumbar"});
+  var fb=el("button",{class:"btn sm", html:svg("M10 13V4M6.5 7.5L10 4l3.5 3.5M4 15.5h12",13)+"<span>파일 붙이기</span>"});
+  fb.addEventListener("click", function(){ docPickFiles(d); });
+  bar.appendChild(fb);
+  bar.appendChild(el("span",{class:"cntx", text:(d.files||[]).length ? ((d.files||[]).length+"개 붙어 있습니다") : "인보이스 PDF나 사진을 붙여 두세요"}));
+  bar.appendChild(el("span",{class:"sp"}));
+  var ok=el("button",{class:"btn pri", text:isNew?"등록":"저장"});
+  ok.addEventListener("click", function(){
+    if(!d.vendor && !d.memo){ toast("거래처나 적요 중 하나는 넣어 주세요"); return; }
+    if(!docAmount(d)){ toast("원화 금액을 넣어 주세요"); return; }
+    delete d._touched;
+    docSave(d); S.docEdit=null;
+    toast(isNew?"증빙을 등록했습니다":"고쳤습니다");
+    render();
+  });
+  var cn=el("button",{class:"btn", text:"취소"});
+  cn.addEventListener("click", function(){ S.docEdit=null; renderView(); });
+  bar.appendChild(ok); bar.appendChild(cn);
+  card.appendChild(bar);
+  if((d.files||[]).length) card.appendChild(docFileList(d, true));
+  return card;
+}
+function docFileList(d, editable){
+  var box=el("div",{style:"padding:11px 15px;border-top:1px solid var(--rule-soft);display:flex;flex-direction:column;gap:7px;"});
+  (d.files||[]).forEach(function(f, i){
+    var row=el("div",{style:"display:flex;align-items:center;gap:9px;flex-wrap:wrap;"});
+    row.appendChild(el("span",{class:"tag b", text:String(f.type).indexOf("pdf")>=0?"PDF":(String(f.type).indexOf("image")===0?"사진":"파일")}));
+    row.appendChild(el("span",{style:"font-size:13px;font-weight:600;", text:f.name}));
+    row.appendChild(el("span",{class:"cntx", text:humanSize(f.size)}));
+    var vb=el("button",{class:"btn sm", text:"보기"});
+    vb.addEventListener("click", function(){ docShowFile(f); });
+    var db=el("button",{class:"btn sm", text:"내려받기"});
+    db.addEventListener("click", function(){ docDownload(f); });
+    row.appendChild(vb); row.appendChild(db);
+    if(editable){
+      var xb=el("button",{class:"btn sm danger", text:"떼기"});
+      xb.addEventListener("click", function(){
+        if(!confirm("「"+f.name+"」을 뗍니다. 파일도 함께 지워집니다.")) return;
+        fileDrop(f.id).catch(function(){});
+        d.files.splice(i,1); docSave(d); render();
+      });
+      row.appendChild(xb);
+    }
+    box.appendChild(row);
+    box.appendChild(el("div",{id:"docPv-"+f.id}));
+  });
+  return box;
+}
+function viewDocs(){
+  var wrap=el("div");
+  var dl=el("datalist",{id:"partnerNames"});
+  S.partners.forEach(function(p){ dl.appendChild(el("option",{value:p.name})); });
+  wrap.appendChild(dl);
+
+  if(S.docEdit){ wrap.appendChild(docForm(S.docEdit, !docList().some(function(x){ return x.id===S.docEdit.id; }))); }
+
+  var bar=el("div",{class:"ldbar"});
+  var nb=el("button",{class:"btn sm pri", html:svg("M10 5v10M5 10h10",13)+"<span>증빙 등록</span>"});
+  nb.addEventListener("click", function(){ S.docEdit=blankDoc(); renderView(); try{ window.scrollTo(0,0); }catch(e){} });
+  bar.appendChild(nb);
+  bar.appendChild(srchBox("거래처·번호·적요로 찾기"));
+  if(S.ldQ){
+    var cb=el("button",{class:"btn sm", text:"검색 지우기"});
+    cb.addEventListener("click", function(){ S.ldQ=""; renderView(); });
+    bar.appendChild(cb);
+  }
+  var zb=el("button",{class:"btn sm", text:"파일 통째로 받기"});
+  zb.addEventListener("click", docZip);
+  bar.appendChild(zb);
+  bar.appendChild(el("span",{class:"sp"}));
+  var nf=0, sum=0;
+  docList().forEach(function(d){ nf+=(d.files||[]).length; sum+=docAmount(d); });
+  bar.appendChild(el("span",{class:"cntx", text:"증빙 "+docList().length+"건 · 파일 "+nf+"개 · "+fmt0(sum)+"원"}));
+  wrap.appendChild(bar);
+
+  var q=String(S.ldQ||"").trim().toLowerCase();
+  var list=docList().filter(function(d){
+    if(!q) return true;
+    return [d.vendor,d.no,d.memo,d.kind,d.cur].join(" ").toLowerCase().indexOf(q)>=0;
+  });
+
+  var card=el("div",{class:"card"});
+  card.appendChild(el("div",{class:"ch"},[
+    el("span",{text:"증빙함"}),
+    el("span",{class:"tag b", text:"세금계산서가 없어 홈택스에 남지 않는 거래를 여기에 모읍니다"})
+  ]));
+  if(!list.length){
+    card.appendChild(el("div",{class:"empty", html: docList().length
+      ? "<b>찾는 증빙이 없습니다</b>검색어를 지워 보세요."
+      : "<b>등록된 증빙이 없습니다</b>해외 인보이스, 간이영수증처럼 세금계산서가 없는 거래를 등록해 두세요. 인보이스 파일까지 붙여 두면 나중에 「이게 무슨 돈이었지」를 답할 수 있습니다."}));
+    wrap.appendChild(card); return wrap;
+  }
+  var tw=el("div",{class:"tw"}), tab=el("table");
+  tab.innerHTML='<thead><tr><th style="width:96px">증빙일</th><th style="width:150px">거래처</th>'
+    +'<th style="width:118px">종류</th><th style="width:130px">외화</th>'
+    +'<th class="n" style="width:120px">원화</th><th style="width:104px">부가세</th>'
+    +'<th>적요</th><th style="width:72px">파일</th><th style="width:96px">전표</th>'
+    +'<th style="width:150px"></th></tr></thead>';
+  var tb=el("tbody");
+  list.forEach(function(d){
+    var tr=el("tr");
+    tr.appendChild(el("td",{class:"c", text:d.date||""}));
+    tr.appendChild(el("td",{style:"font-weight:600;", text:d.vendor||""}));
+    tr.appendChild(el("td",{},[el("span",{class:"tag b", text:d.kind||""})]));
+    tr.appendChild(el("td",{class:"c mut", text:(d.amtFx? (d.cur||"")+" "+d.amtFx : "")+(d.fx?" @"+d.fx:"")}));
+    tr.appendChild(el("td",{class:"n", text:fmt0(docAmount(d))}));
+    tr.appendChild(el("td",{},[el("span",{class:"tag "+(d.vat==="nodeduct"?"w":(d.vat==="agent"?"c":"b")), text:docVatLabel(d.vat)})]));
+    tr.appendChild(el("td",{class:"mut", text:(d.no?d.no+" · ":"")+(d.memo||"")}));
+    var tdF=el("td");
+    if((d.files||[]).length){
+      var fb2=el("button",{class:"lnk", text:(d.files||[]).length+"개"});
+      fb2.addEventListener("click", function(){ S.docOpen=(S.docOpen===d.id?"":d.id); renderView(); });
+      tdF.appendChild(fb2);
+    } else {
+      tdF.appendChild(el("span",{class:"tag w", text:"없음"}));
+    }
+    tr.appendChild(tdF);
+    var tdV=el("td");
+    if(d.voucherId){
+      var vb2=el("button",{class:"lnk", text:"보기"});
+      vb2.addEventListener("click", function(){
+        S.ldTab="book"; S.ldFocus=d.voucherId; S.ldType="all"; S.ldQ=""; S.period="all";
+        S.view="ledger"; render();
+      });
+      tdV.appendChild(vb2);
+    } else {
+      var mb=el("button",{class:"btn sm", text:"전표 만들기"});
+      mb.addEventListener("click", function(){ docFromDraft(d); });
+      tdV.appendChild(mb);
+    }
+    tr.appendChild(tdV);
+    var ta=el("td");
+    var eb=el("button",{class:"btn sm", text:"고치기"});
+    eb.addEventListener("click", function(){
+      S.docEdit=JSON.parse(JSON.stringify(d)); renderView();
+      try{ window.scrollTo(0,0); }catch(e){}
+    });
+    var xb=el("button",{class:"btn sm danger", style:"margin-left:5px;", text:"지우기"});
+    xb.addEventListener("click", function(){
+      if(!confirm("증빙 「"+(d.vendor||d.memo||"")+"」을 지웁니다." + "\n\n" + "붙여 둔 파일도 함께 지워집니다. 연결된 전표는 그대로 남습니다.")) return;
+      (d.files||[]).forEach(function(f){ fileDrop(f.id).catch(function(){}); });
+      var i=-1;
+      docList().forEach(function(x,k){ if(x.id===d.id) i=k; });
+      if(i>=0) docList().splice(i,1);
+      persistDocs(); render();
+    });
+    ta.appendChild(eb); ta.appendChild(xb);
+    tr.appendChild(ta);
+    tb.appendChild(tr);
+    if(S.docOpen===d.id && (d.files||[]).length){
+      var fr=el("tr");
+      var ftd=el("td",{colspan:"10", style:"padding:0;background:var(--surface-3);"});
+      ftd.appendChild(docFileList(d, false));
+      fr.appendChild(ftd); tb.appendChild(fr);
+    }
+  });
+  tab.appendChild(tb); tw.appendChild(tab); card.appendChild(tw);
+  card.appendChild(el("div",{class:"note", text:
+    "세금계산서가 없는 거래는 홈택스에 자료가 남지 않습니다. 나중에 이 돈이 무엇이었는지 설명할 수 있는 것은 인보이스뿐이므로 여기에 파일까지 함께 보관합니다. 파일은 이 브라우저 안에 저장되고 장부 백업 JSON에는 담기지 않으므로, 「파일 통째로 받기」로 따로 받아 두세요. 부가세 대사에서 「해외 결제」로 확인한 건들이 여기 있어야 합니다."}));
+  wrap.appendChild(card);
+  return wrap;
+}
 function viewProjects(){
   var wrap=el("div"), use=projectUsage();
 
@@ -3874,6 +4261,7 @@ function viewExport(){
         {name:"전표", rows:rowsVouchers()},
         {name:"집계표", rows:rowsPivot()},
         {name:"계정거래처별", rows:rowsAP()},
+        {name:"증빙함", rows:rowsDocs()},
         {name:"BS", rows:rowsBS()},
         {name:"PL", rows:rowsPL()},
         {name:"프로젝트", rows:rowsProjects()},
@@ -3894,6 +4282,9 @@ function viewExport(){
   grid.appendChild(xcard("거래처 CSV",
     "등록된 거래처와 사업자번호, 사용 횟수입니다. 세무사에게 거래처 목록을 넘기실 때 쓰세요.",
     "csv 내려받기", function(){ saveFile("거래처_"+tag()+".csv", csvOf(rowsPartners())); }));
+  grid.appendChild(xcard("증빙함 CSV",
+    "세금계산서 없는 거래 목록입니다. 파일 자체는 증빙함의 「파일 통째로 받기」로 받으세요.",
+    "csv 내려받기", function(){ saveFile("증빙함_"+tag()+".csv", csvOf(rowsDocs())); }));
   grid.appendChild(xcard("계정·거래처별 잔액 CSV",
     "계정마다 거래처별로 갈라 놓은 차변·대변·잔액입니다. 채권·채무를 누가 얼마 남겼는지 확인할 때 씁니다.",
     "csv 내려받기", function(){ saveFile("계정거래처별잔액_"+tag()+".csv", csvOf(rowsAP())); }));
@@ -3956,6 +4347,7 @@ function applySeed(seed){
   S.closes = (seed.closes && typeof seed.closes==="object") ? seed.closes : {};
   S.closeLog = Array.isArray(seed.closeLog) ? seed.closeLog : [];
   S.recur = Array.isArray(seed.recur) ? seed.recur : [];
+  S.docs = Array.isArray(seed.docs) ? seed.docs : [];
   splitVouchers((Array.isArray(seed.vouchers)?seed.vouchers:[]).concat(Array.isArray(seed.trash)?seed.trash:[]));
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
   S.partners.sort(function(a,b){ return String(a.name).localeCompare(String(b.name),"ko"); });
@@ -3968,7 +4360,7 @@ function saveAll(){
     localStorage.setItem(LSKEY, JSON.stringify({
       app:"gongan-ledger", version:1, company:S.co, accounts:S.accounts,
       partners:S.partners, projects:S.projects, vouchers:S.vouchers, trash:S.trash,
-      recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[], recur:S.recur||[],
+      recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[], recur:S.recur||[], docs:S.docs||[],
       seedStamp:S.seedStamp||"",
       savedAt:new Date().toISOString()
     }));
@@ -3985,7 +4377,7 @@ function loadAll(){
 
   if(!raw){
     if(seed && Array.isArray(seed.vouchers)){ applySeed(seed); saveAll(); return; }
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.recur=[]; S.firstRun=true;
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.recur=[]; S.docs=[]; S.firstRun=true;
     S.dbState="새 장부 · 기본 계정과목 "+S.accounts.length+"개";
     return;
   }
@@ -4001,10 +4393,11 @@ function loadAll(){
     S.closes=(d.closes && typeof d.closes==="object")?d.closes:{};
     S.closeLog=Array.isArray(d.closeLog)?d.closeLog:[];
     S.recur=Array.isArray(d.recur)?d.recur:[];
+    S.docs=Array.isArray(d.docs)?d.docs:[];
     S.seedStamp=d.seedStamp||"";
     S.dbState="이 브라우저에 저장됨";
   }catch(e){
-    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.recur=[];
+    S.accounts=DEFAULT_ACCOUNTS.slice(); S.vouchers=[]; S.trash=[]; S.partners=[]; S.projects=[]; S.recon={}; S.vat={}; S.closes={}; S.closeLog=[]; S.recur=[]; S.docs=[];
     S.dbState="저장된 자료를 읽지 못했습니다";
   }
   S.accounts.sort(function(a,b){ return String(a.code).localeCompare(String(b.code)); });
@@ -4043,6 +4436,7 @@ function persistRecon(){ saveAll(); }
 function persistVat(){ saveAll(); }
 function persistCloses(){ saveAll(); }
 function persistRecur(){ saveAll(); }
+function persistDocs(){ saveAll(); }
 function persistVoucher(id, doc){
   putLocal(id, doc);
   S.firstRun=false; saveAll();
@@ -4052,7 +4446,7 @@ function backupJson(){
     app:"gongan-ledger", version:1, exportedAt:new Date().toISOString(),
     company:S.co, accounts:S.accounts, partners:S.partners, projects:S.projects,
     recon:S.recon||{}, vat:S.vat||{}, closes:S.closes||{}, closeLog:S.closeLog||[],
-    recur:S.recur||[],
+    recur:S.recur||[], docs:S.docs||[],
     vouchers:S.vouchers, trash:S.trash
   }, null, 1);
 }
@@ -4070,6 +4464,11 @@ function restoreJson(text){
   (d.partners||[]).forEach(function(p){ if(p && p.name && !ph[p.name]) S.partners.push(p); });
   var jh={}; S.projects.forEach(function(p){ jh[p.name]=1; });
   (d.projects||[]).forEach(function(p){ if(p && p.name && !jh[p.name]) S.projects.push(p); });
+  if(Array.isArray(d.docs) && d.docs.length){
+    if(!S.docs) S.docs=[];
+    var dh={}; S.docs.forEach(function(x){ dh[x.id]=1; });
+    d.docs.forEach(function(x){ if(x && x.id && !dh[x.id]) S.docs.push(x); });
+  }
   if(Array.isArray(d.recur) && d.recur.length){
     if(!S.recur) S.recur=[];
     var rh={}; S.recur.forEach(function(x){ rh[x.id]=1; });
@@ -4120,13 +4519,14 @@ function pickBackup(){
 /* ---------- 렌더 ---------- */
 function renderView(){
   var v=$("#view"); v.innerHTML="";
-  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"대사", recur:"정기전표", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
+  var titles={entry:"전표 입력", ledger:"전표장", pivot:"집계표", fs:"재무제표", recon:"대사", docs:"증빙함", recur:"정기전표", projects:"프로젝트", partners:"거래처", accounts:"계정과목", export:"내보내기"};
   var subs={
     entry:"대차가 맞을 때만 저장됩니다 · 저장 후에는 역분개로만 바로잡습니다",
     ledger:"삭제해도 기록은 지워지지 않습니다 · 「삭제이력」에서 되살릴 수 있습니다",
     pivot:"계정별 합계와, 계정마다 거래처별로 갈라 놓은 잔액입니다",
     fs:"집계표에서 자동으로 만들어집니다 · 재무상태표는 원하는 시점을 고르실 수 있습니다",
     recon:"통장·홈택스 자료와 장부를 맞춰 봅니다 · 전표는 건드리지 않습니다",
+    docs:"세금계산서가 없는 거래를 인보이스 파일까지 함께 보관합니다",
     recur:"매달 같은 전표를 등록해 두고 버튼 한 번에 만듭니다",
     projects:"전표 줄마다 프로젝트를 달면 여기서 프로젝트별로 얼마인지 보입니다",
     partners:"등록해 두면 전표에서 이름만 골라도 사업자번호가 따라옵니다",
@@ -4187,6 +4587,7 @@ function renderView(){
   else if(S.view==="fs") node=viewFS();
   else if(S.view==="recon") node=viewRecon();
   else if(S.view==="recur") node=viewRecur();
+  else if(S.view==="docs") node=viewDocs();
   else if(S.view==="projects") node=viewProjects();
   else if(S.view==="partners") node=viewPartners();
   else if(S.view==="accounts") node=viewAccounts();
