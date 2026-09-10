@@ -84,3 +84,58 @@ cd gongan-ledger
 ```
 
 `index.html`을 브라우저로 열면 끝입니다. 빌드 도구도 서버도 필요 없습니다.
+
+---
+
+## 웹 판 (Firebase)
+
+`web/index.html` 은 로그인·다수 법인·권한이 붙은 판입니다. 단독 파일 판
+(`index.html`, `내장부.html`)은 그대로 남아 있고 인터넷 없이도 열립니다.
+
+### 처음 한 번
+
+1. <https://console.firebase.google.com> 에서 프로젝트를 만든다
+2. **Firestore Database** 를 켠다 (프로덕션 모드)
+3. **Authentication → 로그인 방법 → 이메일/비밀번호** 를 켠다
+4. **프로젝트 설정 → 내 앱 → 웹(</>)** 을 추가하고 나오는 `firebaseConfig` 를
+   `web/firebase-config.js` 에 넣는다
+
+```js
+window.FBCONF = {
+  apiKey: "…", authDomain: "….firebaseapp.com", projectId: "…",
+  storageBucket: "….appspot.com", messagingSenderId: "…", appId: "…"
+};
+```
+
+이 값은 공개되어도 되는 설정이다. 실제 접근은 `firestore.rules` 가 막는다.
+
+### 올리기
+
+```bash
+npm i -g firebase-tools
+firebase login
+firebase use --add          # 만든 프로젝트를 고른다
+firebase deploy             # 규칙과 화면을 함께 올린다
+```
+
+`https://<프로젝트>.web.app` 으로 열린다.
+
+### 권한
+
+`members/{회사id}__{이메일}` 문서가 있는 사람만 그 회사에 들어간다.
+
+| role | 할 수 있는 것 |
+|---|---|
+| `owner` | 회사 정보·사용자 관리, 전표 전부 |
+| `editor` | 전표를 넣고 고친다 |
+| `viewer` | 읽기만 한다 — 세무사에게 주는 권한 |
+
+화면에서 감추는 것이 아니라 Firestore 보안 규칙이 서버에서 막는다.
+
+### 쓰던 장부 옮기기
+
+단독 파일 판에서 **내보내기 → 백업 받기** 로 JSON 을 받고, 웹 판에서 회사를
+만든 뒤 **내보내기 → 백업 파일 고르기** 로 올린다. 전표·계정과목·거래처·
+프로젝트·마감·부가세·대사·정기전표·증빙 목록이 함께 넘어간다.
+증빙 **파일**은 브라우저 안(IndexedDB)에 있으므로 증빙함의
+「파일 통째로 받기」로 따로 챙긴다.

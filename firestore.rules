@@ -1,0 +1,78 @@
+rules_version = '2';
+
+/* 회계 자료는 회사 단위로 갇힌다.
+   들어갈 수 있는 사람은 members/{회사id}__{이메일} 문서가 있는 사람뿐이고,
+   그 문서의 role 이 무엇을 할 수 있는지 정한다.
+     owner  회사 정보와 사용자를 바꾼다
+     editor 전표를 넣고 고친다
+     viewer 읽기만 한다 (세무사에게 주는 권한)
+   화면에서 감추는 것이 아니라 서버가 막는다. */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null && request.auth.token.email != null;
+    }
+    function me() {
+      return request.auth.token.email.lower();
+    }
+    function mref(cid) {
+      return /databases/$(database)/documents/members/$(cid + "__" + me());
+    }
+    function isMember(cid) {
+      return signedIn() && exists(mref(cid));
+    }
+    function roleIn(cid) {
+      return get(mref(cid)).data.role;
+    }
+    function isOwner(cid) {
+      return isMember(cid) && roleIn(cid) == "owner";
+    }
+    function canWrite(cid) {
+      return isMember(cid) && (roleIn(cid) == "owner" || roleIn(cid) == "editor");
+    }
+
+    /* 회사와 그 아래 모든 자료 — 전표·계정과목·거래처·마감·부가세·증빙 */
+    match /companies/{cid} {
+      allow get:    if isMember(cid);
+      allow list:   if false;
+      allow create: if signedIn() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isOwner(cid);
+      allow delete: if false;
+
+      match /{document=**} {
+        allow read:  if isMember(cid);
+        allow write: if canWrite(cid);
+      }
+    }
+
+    /* 누가 어느 회사에 들어갈 수 있는지 */
+    match /members/{mid} {
+      allow read: if signedIn() && (
+                       resource.data.email == me()
+                    || isOwner(resource.data.cid)
+                  );
+
+      allow create: if signedIn()
+                    && request.resource.data.cid is string
+                    && request.resource.data.email is string
+                    && request.resource.data.role in ["owner", "editor", "viewer"]
+                    && mid == request.resource.data.cid + "__" + request.resource.data.email
+                    && (
+                         /* 회사를 방금 만든 사람이 자기 자신을 소유자로 */
+                         (   request.resource.data.email == me()
+                          && request.resource.data.role == "owner"
+                          && get(/databases/$(database)/documents/companies/$(request.resource.data.cid)).data.createdBy == request.auth.uid)
+                         /* 또는 그 회사의 소유자가 남을 초대 */
+                      || isOwner(request.resource.data.cid)
+                       );
+
+      allow update: if isOwner(resource.data.cid)
+                    && request.resource.data.cid == resource.data.cid
+                    && request.resource.data.email == resource.data.email;
+
+      allow delete: if isOwner(resource.data.cid);
+    }
+  }
+}
