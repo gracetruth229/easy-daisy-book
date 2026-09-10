@@ -807,6 +807,25 @@ function pickAcct(prefixes, fallbackLo, fallbackHi){
   }
   return "";
 }
+/* 우리 통장 — 「계좌」로 등록한 거래처, 없으면 보통예금에 가장 많이 쓰인 이름 */
+function bankPartner(){
+  var pick=null;
+  S.partners.forEach(function(p){ if(!pick && p.kind==="계좌") pick=p; });
+  if(!pick) S.partners.forEach(function(p){ if(!pick && p.kind==="은행") pick=p; });
+  if(!pick){
+    var code=roleAcct("cash"), cnt={}, best="", n=0;
+    S.vouchers.forEach(function(v){
+      (v.lines||[]).forEach(function(l){
+        if(String(l.code)!==String(code)) return;
+        var q=String(l.partner||"").trim(); if(!q) return;
+        cnt[q]=(cnt[q]||0)+1;
+        if(cnt[q]>n){ n=cnt[q]; best=q; }
+      });
+    });
+    if(best) pick=findPartner(best) || {name:best, bizno:""};
+  }
+  return pick ? {name:pick.name||"", bizno:pick.bizno?bizFormat(pick.bizno):""} : {name:"", bizno:""};
+}
 function roleAcct(role){
   var va=vatAccounts();
   if(role==="vin")  return va.inn[0]||"";
@@ -826,8 +845,12 @@ function buildFromKind(k, total, opt){
   opt=opt||{};
   var K=txKind(k); if(!K) return null;
   var who=opt.partner||"", biz=opt.bizno||"", memo=opt.memo||"";
-  function ln(code, dr, cr, m){
-    return {code:code||"", project:opt.project||"", partner:who, bizno:biz,
+  var bank=bankPartner();
+  function ln(code, dr, cr, m, role){
+    /* 통장 줄의 거래처는 상대처가 아니라 우리 통장이다 */
+    var pw=who, pb=biz;
+    if(role==="cash"){ pw=bank.name; pb=bank.bizno; }
+    return {code:code||"", project:opt.project||"", partner:pw, bizno:pb,
             memo:m||"", dr:dr, cr:cr};
   }
   var v = K.vat ? splitVat(total) : {supply:(+total||0), tax:0};
@@ -835,16 +858,16 @@ function buildFromKind(k, total, opt){
   if(K.dir==="buy"){
     lines.push(ln(opt.acct||"", v.supply, "", memo));
     if(K.vat && v.tax) lines.push(ln(roleAcct("vin"), v.tax, "", "매입세액"));
-    lines.push(ln(roleAcct(K.pay), "", (+total||0), K.pay==="card"?"카드 결제":""));
+    lines.push(ln(roleAcct(K.pay), "", (+total||0), K.pay==="card"?"카드 결제":"", K.pay));
   } else if(K.dir==="sell"){
-    lines.push(ln(roleAcct(K.pay), (+total||0), "", ""));
+    lines.push(ln(roleAcct(K.pay), (+total||0), "", "", K.pay));
     lines.push(ln(opt.acct||"", "", v.supply, memo));
     if(K.vat && v.tax) lines.push(ln(roleAcct("vout"), "", v.tax, "매출세액"));
   } else if(K.dir==="pay"){
     lines.push(ln(roleAcct("pay"), (+total||0), "", memo));
-    lines.push(ln(roleAcct("cash"), "", (+total||0), ""));
+    lines.push(ln(roleAcct("cash"), "", (+total||0), "", "cash"));
   } else {
-    lines.push(ln(roleAcct("cash"), (+total||0), "", memo));
+    lines.push(ln(roleAcct("cash"), (+total||0), "", memo, "cash"));
     lines.push(ln(roleAcct("recv"), "", (+total||0), ""));
   }
   return {type:K.vtype, lines:lines};
@@ -932,8 +955,9 @@ function easyCard(){
   var pv=el("div",{id:"easyPv"});
   card.appendChild(pv);
   card.appendChild(el("div",{class:"note", text:
-    K.vat ? "총액만 넣으시면 공급가액과 부가세를 10%로 갈라 놓습니다. 아래 「이렇게 기록됩니다」가 실제로 저장될 분개입니다. 「전표에 넣기」를 누르면 아래 표로 옮겨지고, 거기서 얼마든지 고치실 수 있습니다."
-          : "부가세 없는 거래입니다. 매입세액을 잡지 않으므로 공제받지 못합니다."}));
+    (bankPartner().name ? "통장 줄의 거래처는 우리 통장(「"+bankPartner().name+"」)으로 넣습니다 — 거래처 화면에서 「계좌」로 등록한 곳입니다. 전표에서 바꾸실 수 있습니다. " : "")
+    + (K.vat ? "총액만 넣으시면 공급가액과 부가세를 10%로 갈라 놓습니다. 아래 「이렇게 기록됩니다」가 실제로 저장될 분개입니다. 「전표에 넣기」를 누르면 아래 표로 옮겨지고, 거기서 얼마든지 고치실 수 있습니다."
+          : "부가세 없는 거래입니다. 매입세액을 잡지 않으므로 공제받지 못합니다.")}));
   setTimeout(updateEasy, 0);
   return card;
 }
