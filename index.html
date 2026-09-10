@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#0052ff">
-<title>㈜공간네트웍스 재무관리시스템</title>
+<title>Easy Daisy Book</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap">
@@ -76,7 +76,7 @@ input[type=number]{-moz-appearance:textfield;}
 /* shell */
 #app{display:flex;height:100vh;min-height:560px;}
 .side{width:236px;flex:none;background:var(--surface);border-right:1px solid var(--rule);display:flex;flex-direction:column;padding:18px 0 12px;}
-.wm{font-family:var(--f-d);font-weight:700;font-size:19.5px;padding:0 18px 5px;letter-spacing:-.035em;color:var(--ink);line-height:1.25;}
+.wm{font-family:var(--f-d);font-weight:700;font-size:19px;padding:0 18px 6px;letter-spacing:-.04em;letter-spacing:-.035em;color:var(--ink);line-height:1.25;}
 .wm small{display:block;font-size:12.5px;font-weight:500;letter-spacing:-.01em;color:var(--accent);margin-bottom:1px;}
 .co{padding:0 18px 14px;font-size:13px;color:var(--ink-3);}
 .per{margin:0 12px 14px;}
@@ -354,7 +354,7 @@ table.fs.two td.n:last-child{color:var(--accent-deep);}
 <body>
 <div id="app">
   <aside class="side">
-    <div class="wm"><small>㈜공간네트웍스</small>재무관리시스템</div>
+    <div class="wm">Easy Daisy Book</div>
     <div class="co" id="coName">회사 불러오는 중…</div>
     <div class="per">
       <label for="periodSel">기간</label>
@@ -507,7 +507,7 @@ var VIEWS = [
 var S = {
   co:{name:"㈜공간네트웍스", fyLabel:"제1기", fyStart:"2026-06-23"},
   accounts:[], vouchers:[], partners:[], projects:[], period:"all", view:"entry",
-  db:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
+  db:null, unsub:null, dbState:"연결 중", draft:null, editId:null, seedStamp:"", seedUpdate:null, ldType:"all", ldQ:"",
   trash:[],
   lastType:"은행거래", ldTab:"book", ldFocus:"",
   closes:{}, closeLog:[], closeOpen:false, recur:[],
