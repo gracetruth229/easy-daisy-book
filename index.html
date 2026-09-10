@@ -1721,6 +1721,12 @@ function viewLedger(){
     var vClosed=isClosed(v.date);
     if(vClosed) box.appendChild(el("span",{class:"tag g", text:"마감된 달"}));
     var vdocs=docsOfVoucher(v.id);
+    if(!vdocs.length && !v.deleted){
+      var addd=el("button",{class:"tag b", style:"border:0;cursor:pointer;", text:"＋ 증빙"});
+      addd.setAttribute("title","세금계산서가 없는 거래입니다 — 인보이스·영수증을 붙여 두세요");
+      addd.addEventListener("click", function(){ docFromVoucher(v); });
+      box.appendChild(addd);
+    }
     if(vdocs.length){
       var dtag=el("button",{class:"tag d", style:"border:0;cursor:pointer;", text:"증빙 "+vdocs.length+"건"});
       dtag.addEventListener("click", function(){
@@ -3478,6 +3484,31 @@ function docFromDraft(d){
   S.view="entry"; render();
   toast("증빙으로 전표를 채웠습니다 — 계정과목만 고르고 저장하세요");
 }
+/* 전표에서 바로 증빙 등록하기 */
+function docFromVoucher(v){
+  if(!leaveEdit("docs")) return;
+  var d=blankDoc();
+  var partner="", biz="";
+  (v.lines||[]).forEach(function(l){
+    if(!partner && l.partner) partner=l.partner;
+    if(!biz && l.bizno) biz=l.bizno;
+  });
+  var hasVat=false, va=vatAccounts(), vc={};
+  va.inn.concat(va.out).forEach(function(c){ vc[c]=1; });
+  (v.lines||[]).forEach(function(l){ if(vc[l.code]) hasVat=true; });
+  d.date=v.date||todayISO();
+  d.paidDate=(v.type==="은행거래") ? (v.date||"") : "";
+  d.vendor=partner;
+  d.amt=String(Math.round(voucherAmount(v)));
+  d.memo=v.memo||"";
+  d.pay=(v.type==="은행거래") ? "계좌이체" : "카드";
+  d.vat=hasVat ? "nodeduct" : "none";
+  d.voucherId=v.id;
+  S.docEdit=d; S.docOpen=""; S.ldQ="";
+  S.view="docs"; render();
+  try{ window.scrollTo(0,0); }catch(e){}
+  toast("전표 내용으로 채웠습니다 — 인보이스를 붙이고 저장하세요");
+}
 function docsOfVoucher(id){
   return docList().filter(function(d){ return d.voucherId===id; });
 }
@@ -3565,9 +3596,13 @@ function rowsDocs(){
 
 function docForm(d, isNew){
   var card=el("div",{class:"card", style:"margin-bottom:16px;"});
+  var linked=null;
+  if(d.voucherId) allVouchers().forEach(function(v){ if(v.id===d.voucherId) linked=v; });
   card.appendChild(el("div",{class:"ch"},[
     el("span",{text:isNew?"증빙 등록":"증빙 고치기"}),
-    el("span",{class:"tag b", text:"세금계산서가 없는 거래를 여기에 남깁니다"})
+    el("span",{class:"tag "+(linked?"g":"b"), text: linked
+      ? ("전표에 붙습니다 — "+linked.date+" · "+(linked.memo||"(적요 없음)")+" · "+fmt0(voucherAmount(linked))+"원")
+      : "세금계산서가 없는 거래를 여기에 남깁니다"})
   ]));
   var g=el("div",{class:"rcgrid"});
   function fld(label, node, w){
