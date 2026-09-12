@@ -89,8 +89,9 @@ cd gongan-ledger
 
 ## 웹 판 (Firebase)
 
-`web/index.html` 은 로그인·다수 법인·권한이 붙은 판입니다. 단독 파일 판
-(`index.html`, `내장부.html`)은 그대로 남아 있고 인터넷 없이도 열립니다.
+`web/index.html` 은 로그인·다수 법인·권한이 붙은 판이고, 저장소 뿌리의
+`index.html` 은 그리로 보내는 안내 페이지다. 단독 파일 판(`offline.html`,
+`내장부.html`)은 그대로 남아 있고 인터넷 없이도 열린다.
 
 ### 처음 한 번
 
